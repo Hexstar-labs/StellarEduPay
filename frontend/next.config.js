@@ -1,5 +1,14 @@
 /** @type {import('next').NextConfig} */
 
+// External-origin allow-lists are defined in a single shared module so that
+// both this file (runtime policy) and tests/csp.test.js (assertions) stay in
+// sync automatically. To add a new origin, edit only cspSources.js.
+const {
+  CONNECT_SRC_ORIGINS,
+  STYLE_SRC_ORIGINS,
+  FONT_SRC_ORIGINS,
+} = require('./src/config/cspSources');
+
 const isDev = process.env.NODE_ENV !== 'production';
 
 // Origin of the backend API (scheme://host:port), derived from the public API
@@ -31,13 +40,13 @@ const scriptSrc = isDev ? "script-src 'self' 'unsafe-eval'" : "script-src 'self'
 const CSP = [
   "default-src 'self'",
   scriptSrc,
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  `style-src 'self' 'unsafe-inline' ${STYLE_SRC_ORIGINS.join(' ')}`,
   "img-src 'self' data:",
-  "font-src 'self' https://fonts.gstatic.com data:",
+  `font-src 'self' ${FONT_SRC_ORIGINS.join(' ')} data:`,
   // Allow fetch/XHR to the backend API and Stellar Horizon (testnet + mainnet).
   // The backend API origin is included so the browser can reach it cross-origin
   // in split-port deployments (e.g. localhost:3000 UI → localhost:5000 API).
-  `connect-src 'self' ${API_ORIGIN} https://horizon-testnet.stellar.org https://horizon.stellar.org`,
+  `connect-src 'self' ${API_ORIGIN} ${CONNECT_SRC_ORIGINS.join(' ')}`,
   "object-src 'none'",
   "frame-ancestors 'none'",
   "base-uri 'self'",

@@ -95,7 +95,22 @@ npm test -- tests/csp.test.js
 
 ### Adding new external origins
 
-If a new external service needs to be reachable from the frontend (e.g. a currency conversion API), add its origin to the `connect-src` directive in `frontend/next.config.js` and update the test in `tests/csp.test.js` accordingly.
+The CSP allow-list is defined in a **single source of truth**:
+
+```
+frontend/src/config/cspSources.js
+```
+
+Both `frontend/next.config.js` (runtime policy) and `tests/csp.test.js` (assertions) import from this module. Adding or removing an origin requires editing exactly one file — the change is automatically reflected in the deployed CSP header and in the test suite.
+
+**To add a new external origin:**
+
+1. Open `frontend/src/config/cspSources.js`.
+2. Add the full origin (scheme + host, no trailing slash) to the appropriate array:
+   - `CONNECT_SRC_ORIGINS` — fetch/XHR targets (APIs, WebSockets)
+   - `STYLE_SRC_ORIGINS` — external stylesheets
+   - `FONT_SRC_ORIGINS` — external font files
+3. That's it. Run `npm test -- tests/csp.test.js` to confirm.
 
 Do **not** add `'unsafe-inline'` or `'unsafe-eval'` to `script-src`. If a third-party library requires inline scripts, use a nonce-based approach instead.
 
