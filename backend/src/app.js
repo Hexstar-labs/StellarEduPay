@@ -37,6 +37,8 @@ const emailRoutes = require('./routes/emailRoutes');
 const metricsRoute = require('./routes/metricsRoute');
 const webhookEndpointRoutes = require('./routes/webhookEndpointRoutes');
 const webhookDeliveryRoutes = require('./routes/webhookDeliveryRoutes');
+const paymentPlanRoutes = require('./routes/paymentPlanRoutes');
+const auditRoutes = require('./routes/auditRoutes');
 
 const { registerPaymentSavedSubscribers } = require('./services/paymentSavedSubscribers');
 const { startPolling, stopPolling } = require('./services/transactionPollingService');
@@ -164,6 +166,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/webhook-endpoints', webhookEndpointRoutes);
 app.use('/api/webhook-deliveries', webhookDeliveryRoutes);
 app.use('/api/email', emailRoutes);
+app.use('/api/payment-plans', paymentPlanRoutes);
+app.use('/api/audit', auditRoutes);
 app.get('/api/consistency', requireAdminAuth, runConsistencyCheck);
 app.get('/health', healthCheck);
 app.get('/health/live', healthLive);

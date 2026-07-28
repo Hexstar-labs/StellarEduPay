@@ -621,7 +621,7 @@ async function syncPaymentsForSchool(school) {
     for (const tx of page.records) {
       summary.found++;
 
-      const existing = await Payment.findOne({ txHash: tx.hash, deletedAt: null });
+      const existing = await Payment.findOne({ txHash: tx.hash, schoolId, deletedAt: null });
       if (existing) { summary.alreadyProcessed++; done = true; break; }
 
       summary.new++;
