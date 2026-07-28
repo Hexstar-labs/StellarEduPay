@@ -47,6 +47,11 @@ const onResponseRejected = createRefreshHandler({
 
 api.interceptors.response.use((response) => response, onResponseRejected);
 
+// Export the bare axios instance as the default so callers that need ad-hoc
+// requests (e.g. login.jsx) can use api.post('/auth/login', data) without
+// coupling to a specific named helper.
+export default api;
+
 export const getStudents = (page = 1, limit = 20, { search, status, className } = {}) =>
   api.get("/students", {
     params: {
