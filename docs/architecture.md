@@ -14,6 +14,7 @@ StellarEduPay is a three-tier application: a Next.js frontend, a Node.js/Express
 - [Middleware](#middleware)
 - [MongoDB Schema Relationships](#mongodb-schema-relationships)
 - [Background Workers](#background-workers)
+- [Queue Durability](#queue-durability)
 - [Multi-School Tenancy](#multi-school-tenancy)
 - [Error Handling and Resilience](#error-handling-and-resilience)
 
@@ -335,10 +336,79 @@ All workers start on server boot inside the `connectDatabase().then(...)` callba
 | Worker | Start function | Interval | Purpose |
 |---|---|---|---|
 | Transaction poller | `startPolling()` | `POLL_INTERVAL_MS` (30s) | Sync new payments from Stellar |
-| Retry worker | `startRetryWorker()` | `RETRY_INTERVAL_MS` (60s) | Re-attempt failed verifications |
+| Retry worker | `startRetryWorker()` | `RETRY_INTERVAL_MS` (60s) | Re-attempt failed verifications (MongoDB-backed when Redis is absent) |
 | Consistency scheduler | `startConsistencyScheduler()` | configurable | Detect DB/chain drift |
 | Reminder scheduler | `startReminderScheduler()` | `REMINDER_INTERVAL_MS` (24h) | Send fee reminder emails |
-| TX queue worker | `startTxQueueWorker()` | event-driven (BullMQ) | Process queued transactions via Redis |
+| TX processing queue worker | `startTxQueueWorker()` | event-driven (BullMQ, **Durable via MongoDB outbox — see Queue Durability below**) | Process queued transactions submitted via `POST /api/payments/process-queue`, the stuck-payment reconciler, and any internal pathway |
+| Transaction retry + DLQ worker | `initializeRetryQueue()` | event-driven (BullMQ, configurable backoff with jitter) | Re-attempt transaction verifications on transient Horizon errors; permanent failures and retry exhaustion land in the dedicated dead-letter queue |
+| Report generation worker | `startReportQueueWorker()` | event-driven (BullMQ, **durable via `ReportJob` collection**) | Generate CSV/JSON reports and update `ReportJob` status to `completed` / `failed` |
+
+---
+
+## Queue Durability
+
+The codebase has three asynchronous queues. None of them relies solely on Redis — every queue has a MongoDB-backed outbox (or mirror) so no work-in-progress is silently dropped across a server restart, pod eviction, or Redis outage. **There is no in-memory queue that holds primary submission responsibility.**
+
+### Transaction processing queue — `queue/transactionQueue.js`
+
+This is the queue that holds the primary transaction-submission pathway used by:
+
+- The stuck-payment reconciliation scheduler (`stuckPaymentReconciliation.reconcileStuckPayments`)
+- Any internal/manual pathway that re-queues a known `txHash` for re-processing
+
+**Two-tier durability model:**
+
+1. **MongoDB first (durable backing).** Every `enqueueTransaction(txHash, ctx)` performs an `upsert` on `PendingVerification` (scoped on `txHash`, which is globally unique). The document moves through the lifecycle: `pending → processing → resolved | dead_letter`. MongoDB is the durable backing — BullMQ is the actual processor.
+2. **BullMQ second (best-effort dispatcher).** After MongoDB is written, the job is added to BullMQ with `jobId: txHash` so duplicate enqueues are deduplicated.
+
+If BullMQ is unavailable at module-load time (Redis down or network blip means `getRedisClient()` returns `null`, so the module-scope `transactionQueue` instance is `null`), the runtime enters MongoDB-only degraded mode. In that mode the MongoDB record is the source of truth — the job is *still safe* and will be picked up on the next process restart:
+
+- `enqueueTransaction(txHash, ctx)` writes the MongoDB record and returns `null` (the BullMQ step is skipped, `txHash` is just persisted for the next startup).
+- `recoverPendingJobs()` returns `0` and skips the BullMQ requeue loop (no `transactionQueue` to add to).
+- `markResolved`, `markDead`, `markInterrupted`, and `getJobStatus` (the MongoDB-side inspection) continue to work normally because they don't touch Redis.
+- On the **next process restart** with Redis reachable, the startup sweep re-enqueues every still-pending doc. (In-process auto-heal is not implemented — a restart is required to flip out of MongoDB-only mode.)
+
+**Restart recovery.** On server start, `recoverPendingJobs()` runs twice by design — first in `app.js` (after `connectDatabase().then(...)` resolves and `reconcileStuckPayments()` has just requeued any `SUBMITTED` payments older than `STUCK_PAYMENT_THRESHOLD_MS`, before any workers start), then again from `transactionQueueService.startWorker` (after the BullMQ worker is created). The second call is **idempotent rather than a true no-op**: BullMQ rejects `Queue.add()` for jobs whose `jobId: txHash` is already present with `Job with that id already exists`, and the loop logs and continues. The net effect is identical to a single call but produces a handful of expected warn logs on every boot (one per job recovered in the first sweep).
+
+1. Finds every `PendingVerification` doc with `status ∈ {pending, processing}` across all schools.
+2. Resets any `processing` doc back to `pending` so a fresh worker takes over.
+3. Re-adds the job to BullMQ. If BullMQ already holds the job (because its `jobId: txHash` was deduped), `Queue.add()` rejects with `Job with that id already exists`; the loop logs and continues, leaving both the MongoDB record and the existing BullMQ job intact.
+
+**Graceful shutdown.** `shutdownManager.drainWorkers()` calls `transactionQueue.drainWorker()` which:
+
+- Waits up to `DRAIN_TIMEOUT_MS` (default 60s) for in-flight jobs to finish.
+- If the timeout is hit, marks any still-`active` job's `PendingVerification` as `pending` (via `markInterrupted`) with `lastError: 'Job interrupted by shutdown drain timeout — will be recovered on restart'`. Critically, this is **NOT** `dead_letter` — `dead_letter` is reserved for terminal failures from `markDead`. The drain-timeout job is re-processable, so the next startup's `recoverPendingJobs()` sweep picks it up and re-enqueues it.
+
+**Test coverage.** `tests/transactionQueueDurability.test.js` (issue #388) and `tests/issue-800-queue-restart.test.js` (issue #800) verify the persistence-first contract, the recovery sweep, idempotent upsert on duplicate `txHash`, and `markResolved` / `markDead` semantics. The restart-mid-queue scenario ("no transaction submission is silently dropped after a process restart") is exercised by the new `'restart-mid-queue — no transaction is silently dropped (#1053)'` describe block in `tests/transactionQueueDurability.test.js`, which simulates restart by configuring the post-restart MongoDB state and verifying that `recoverPendingJobs()` re-enqueues the `txHash`-keyed job into BullMQ.
+
+### Transaction retry + DLQ queue — `queue/transactionRetryQueue.js`
+
+This queue exists **separately** from the transaction processing queue and serves a different purpose: it retries transaction verifications that failed due to transient errors (e.g. Horizon 429 / 5xx). It is initialised only when `retryServiceSelector.useBullMQ()` returns true (`REDIS_HOST` is configured).
+
+- **Main retry queue** (`transaction-retry-queue`): custom exponential backoff with up to `MAX_RETRY_ATTEMPTS` retries, capped by `MAX_RETRY_DELAY_MS`. The BullMQ Worker is configured with explicit `lockDuration`, `stalledInterval`, and `maxStalledCount` so that jobs whose worker dies mid-flight are reclaimed automatically by BullMQ itself.
+- **Dead-letter queue** (`transaction-dead-letter-queue`): terminal failures (`permanently_failed` errors from `retryContract.isPermanent`, or retry-exhaustion) are written here with the original job data, error code, and `failedAt` timestamp.
+
+The retry service also writes a `PendingVerification` mirror record for cross-school queue stats, so MongoDB remains the system-wide source of truth for "was this tx ever retried".
+
+**Difference from the transaction processing queue:** the retry worker uses BullMQ's built-in stalled-job reclaim (`lockDuration`, `stalledInterval`, `maxStalledCount`) for fast mid-flight recovery, while the transaction processing worker relies entirely on the MongoDB-backed `recoverPendingJobs()` sweep reconstituting the doc on restart. Both paths are durable; they are not the same recovery mechanism.
+
+### Report generation queue — `queue/reportQueue.js`
+
+Mirrors every job into the `ReportJob` collection with a monotonic lifecycle (`pending → processing → completed | failed`). The HTTP status endpoint reads the MongoDB record, not the BullMQ job state, so report status survives a queue restart.
+
+### Summary
+
+| Queue | In-memory only? | Lost on restart? | Cross-restart recovery path |
+|---|---|---|---|
+| Transaction processing (`transactionQueue.js`) | No | No | `recoverPendingJobs()` re-enqueues every `pending`/`processing` `PendingVerification` doc into BullMQ on every restart |
+| Transaction retry + DLQ (`transactionRetryQueue.js`) | No | No | BullMQ persists jobs in Redis; permanent failures are durably written to the DLQ; mirror records in `PendingVerification` survive even a full Redis loss |
+| Report generation (`reportQueue.js`) | No | No | `ReportJob` documents hold the authoritative state machine; `enqueueReportJob` re-creates the Document on every submission; report status queries read the MongoDB record |
+
+Failure modes that *can* lose a transaction, with mitigations:
+
+- **MongoDB write fails before BullMQ enqueue** — `enqueueTransaction` throws and the caller (typically `transactionQueueService.processTransactionJob` or `stuckPaymentReconciliation`) decides whether to retry. The error is logged with `correlationId` for triage.
+- **MongoDB upsert succeeds, BullMQ add succeeds, but the worker crashes before `markResolved` is called** — `PendingVerification.status` is left in `processing`. The startup recovery sweep (`recoverPendingJobs`) resets it to `pending` and re-adds to BullMQ, so the job is reprocessed. Idempotency in `processTransactionJob` (the existing `Payment.findOne({ txHash })` skip) ensures double-processing is a no-op.
+- **Redis backplane loses all data** (e.g. non-persistent Redis in dev) — `PendingVerification` documents with `status=pending|processing` are recovered on the next startup, even though BullMQ state was lost. The `'restart-mid-queue — no transaction is silently dropped (#1053)'` describe block in `tests/transactionQueueDurability.test.js` proves this flow.
 
 ---
 

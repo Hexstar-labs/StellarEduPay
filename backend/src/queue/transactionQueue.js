@@ -17,9 +17,10 @@
  *     Called once at startup.  Finds all PendingVerification docs with
  *     status=pending|processing and re-enqueues them into BullMQ so they are
  *     not silently dropped after a crash or restart.
- *
- *   markResolved(txHash) / markDead(txHash, error)
- *     Called by the worker after a job succeeds or permanently fails.
+ * *   markResolved(txHash) / markDead(txHash, error) / markInterrupted(txHash, reason)
+ *   Called by the worker after a job succeeds, terminally fails, or is killed
+ *   by a shutdown drain timeout respectively. markInterrupted resets the doc to
+ *   `pending` so the next recoverPendingJobs() picks it up.
  */
 
 const { Queue, Worker } = require('bullmq');
@@ -107,6 +108,28 @@ async function markDead(txHash, error) {
     {
       status: 'dead_letter',
       lastError: error?.message || String(error),
+    },
+    { _bypassTenantScope: true }
+  );
+}
+
+/**
+ * Mark a PendingVerification document as pending again after it was interrupted
+ * by a graceful-shutdown timeout (drainWorker). The original job is NOT a
+ * terminal failure — the worker was simply killed mid-flight because the drain
+ * budget expired. Resetting to `pending` ensures the next `recoverPendingJobs()`
+ * startup sweep re-queues it. Using `dead_letter` here would orphan the job,
+ * since `recoverPendingJobs` only picks up `pending|processing` documents.
+ *
+ * Bypass is required: drainWorker has txHash but not schoolId; txHash is globally unique.
+ */
+async function markInterrupted(txHash, reason) {
+  await PendingVerification.findOneAndUpdate(
+    { txHash },
+    {
+      status: 'pending',
+      lastError: reason?.message || String(reason),
+      lastAttemptAt: new Date(),
     },
     { _bypassTenantScope: true }
   );
@@ -335,7 +358,11 @@ async function drainWorker() {
       try {
         const jobState = await job.getState();
         if (jobState === 'active') {
-          await markDead(job.data.txHash, { message: 'Job interrupted by shutdown — will be recovered on restart' });
+          // Drain-timeout interruption: the job is NOT a terminal failure, the
+          // worker was simply killed mid-flight because DRAIN_TIMEOUT_MS expired.
+          // Reset status to 'pending' (not 'dead_letter') so recoverPendingJobs()
+          // on the next boot picks it up.
+          await markInterrupted(job.data.txHash, { message: 'Job interrupted by shutdown drain timeout — will be recovered on restart' });
           requeuedJobs++;
           logger.info('[TransactionQueue] Re-queued interrupted job for recovery', { txHash: job.data.txHash });
         }
@@ -368,6 +395,7 @@ module.exports = {
    recoverPendingJobs,
    markResolved,
    markDead,
+   markInterrupted,
    drainWorker,
    getWorker,
    QUEUE_NAME,
