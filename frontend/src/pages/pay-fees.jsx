@@ -1,6 +1,8 @@
 import Head from "next/head";
 import PaymentForm from "../components/PaymentForm";
 import VerifyPayment from "../components/VerifyPayment";
+import SseDegradedBanner from "../components/SseDegradedBanner";
+import { usePaymentEvents } from "../hooks/usePaymentEvents";
 
 const STEPS = [
   { n: "1", title: "Enter Student ID", desc: "Look up your student's details and payment status." },
@@ -9,9 +11,14 @@ const STEPS = [
 ];
 
 export default function PayFees() {
+  // Surface a visible degraded-mode banner when cross-replica SSE delivery is
+  // unavailable, so parents know real-time confirmation may be delayed (Issue #1054).
+  const { degraded } = usePaymentEvents();
+
   return (
     <>
       <Head><title>Pay Fees | StellarEduPay</title></Head>
+      <SseDegradedBanner degraded={degraded} />
 
       <div className="payfees-page">
         {/* Page header */}

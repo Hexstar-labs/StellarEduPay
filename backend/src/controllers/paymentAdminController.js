@@ -408,8 +408,9 @@ function streamPaymentEvents(req, res) {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  // addClient owns the per-connection heartbeat and enforces the per-school
-  // connection cap. A false return means the cap is reached — reject cleanly.
+  // addClient owns the per-connection heartbeat, enforces the per-school
+  // connection cap, and — when Redis is already degraded — immediately sends
+  // an sse.degraded event to this client (Issue #1054).
   if (!addClient(schoolId, res)) {
     res.write('event: error\ndata: {"error":"too_many_connections"}\n\n');
     res.end();
