@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stellaredupay
+data:
+  STELLAR_NETWORK: "mainnet"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  NODE_ENV: "production"
+  # Used by the Next.js server to proxy /api/* requests server-side to the
+  # backend pod (SSR and Next.js rewrites). Not exposed to the browser.
+  BACKEND_PROXY_TARGET: "http://backend:5000"
