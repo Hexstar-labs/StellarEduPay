@@ -67,6 +67,15 @@ describe('Issue #396 — Backend Helmet CSP config (JSON API)', () => {
 // ── Frontend next.config.js CSP tests ────────────────────────────────────────
 
 describe('Issue #396 — Frontend CSP (next.config.js)', () => {
+  // The allow-list is the single source of truth: the same arrays that
+  // next.config.js uses to build the CSP header are imported here so the
+  // assertions automatically stay in sync with the deployed policy.
+  const {
+    CONNECT_SRC_ORIGINS,
+    STYLE_SRC_ORIGINS,
+    FONT_SRC_ORIGINS,
+  } = require('../frontend/src/config/cspSources');
+
   let headers;
   let cspValue;
 
@@ -131,8 +140,21 @@ describe('Issue #396 — Frontend CSP (next.config.js)', () => {
   });
 
   test('frontend CSP includes connect-src with Stellar Horizon endpoints', () => {
-    expect(cspValue).toContain('horizon-testnet.stellar.org');
-    expect(cspValue).toContain('horizon.stellar.org');
+    for (const origin of CONNECT_SRC_ORIGINS) {
+      expect(cspValue).toContain(origin);
+    }
+  });
+
+  test('frontend CSP includes style-src external origins', () => {
+    for (const origin of STYLE_SRC_ORIGINS) {
+      expect(cspValue).toContain(origin);
+    }
+  });
+
+  test('frontend CSP includes font-src external origins', () => {
+    for (const origin of FONT_SRC_ORIGINS) {
+      expect(cspValue).toContain(origin);
+    }
   });
 
   test("frontend CSP includes object-src 'none'", () => {

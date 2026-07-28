@@ -48,6 +48,20 @@ jobs:
       - name: Audit frontend
         run: node scripts/check-dependency-audit.js frontend
 
+  secret-scan:
+    name: Scan example files for real-format secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+      # Scans all .env.example / .env.local.example files for Stellar StrKey
+      # secrets, BIP-39 mnemonics, and realistic hex values that should never
+      # appear in committed template files. No dependencies required — pure Node.
+      - name: Scan example files for secret material
+        run: node scripts/scan-example-secrets.js
+
   migrations:
     name: Validate migration numbering
     runs-on: ubuntu-latest

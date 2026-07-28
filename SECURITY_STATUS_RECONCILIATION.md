@@ -34,3 +34,35 @@ Most payment **read** endpoints trust the `X-School-ID`/`X-School-Slug` header a
 ## Disposition
 
 `IMPLEMENTATION_SUMMARY.md` is accurate and current; no change needed there beyond a pointer to this document. No other repository markdown currently contradicts it. If a future static backlog is reintroduced and drifts out of sync again, prefer filing/updating a GitHub issue over trusting either document at face value — see the rationale in `99a414e`.
+
+---
+
+# Reconciliation: docs/issue-intake.md vs. PROJECT_ISSUES.md claim that GitHub Issues are disabled
+
+**Verified 2026-07-28**
+
+## Context
+
+`docs/issue-intake.md` (added 2026-07-04) states that GitHub Issues is the intake channel for this repository and documents the full bug-report template and maintainer-triage process.
+
+`PROJECT_ISSUES.md` (AI-generated audit, dated 2026-06-24, deleted in `99a414e` on 2026-07-22) contained the following claim in issue #150:
+
+> "GitHub Issues are also disabled on the active fork, so there's no contribution intake path."
+
+This is a direct contradiction: one document describes a fully functioning intake process; the other says no intake path exists.
+
+## Resolution
+
+The contradiction is resolved and the claim in `PROJECT_ISSUES.md` was stale at the time it was written:
+
+1. **Timeline:** `PROJECT_ISSUES.md` was generated on 2026-06-24. `docs/issue-intake.md` was added on 2026-07-04 — eleven days later — explicitly establishing the intake path the audit claimed was missing. By the time the audit file was removed (2026-07-22), the gap it identified had already been closed.
+
+2. **GitHub Issues are enabled and functional.** Issues have been filed, triaged, and closed on this repository throughout the project's history. The removal of `PROJECT_ISSUES.md` was itself tracked as issue #1110 and closed via the same commit (`99a414e`). The audit document's own acceptance criteria for issue #150 ("a working issue-intake path documented") was satisfied by `docs/issue-intake.md` before the audit file was even removed.
+
+3. **The deleted file was unreliable.** `PROJECT_ISSUES.md` was one of three overlapping AI-generated backlogs removed in `99a414e` because they had no canonical status and actively contradicted each other and the codebase. Its claims about GitHub Issues availability should not be treated as authoritative.
+
+4. **End-to-end verification:** `docs/issue-intake.md` documents intake via GitHub Issues; GitHub Issues are enabled on this repository; issues have been successfully filed and closed here. The process described in `docs/issue-intake.md` functions as documented.
+
+## Disposition
+
+`docs/issue-intake.md` is accurate. The claim from `PROJECT_ISSUES.md` was stale AI-generated content that has since been removed. A verification note has been added to `docs/issue-intake.md` directly so that any reader who encounters a reference to the old claim in git history has a clear, in-document explanation of its status.

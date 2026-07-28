@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/router';
 import { useAdminAuth } from '../hooks/useAdminAuth';
 import { getErrorMessage } from '../utils/errorMessages';
+import api from '../services/api';
 
 // Only honour same-origin, absolute internal paths as a post-login destination.
 // Anything else (external URLs, protocol-relative "//evil.com", missing) falls
@@ -26,18 +27,18 @@ export default function LoginPage() {
     setError('');
     setLoading(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ username, password }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setError(getErrorMessage(data.code, data.error)); return; }
+      await api.post('/auth/login', { username, password });
       login();
       router.push(safeReturnTo(router.query.returnTo));
-    } catch {
-      setError('Network error. Please try again.');
+    } catch (err) {
+      if (err.response) {
+        // HTTP error response from the server (4xx, 5xx)
+        const { code, error } = err.response.data || {};
+        setError(getErrorMessage(code, error));
+      } else {
+        // Network failure, timeout, or no response at all
+        setError('Network error. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
