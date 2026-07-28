@@ -105,6 +105,10 @@ describe('payment-processing critical-path alert coverage', () => {
     'HorizonAllEndpointsUnavailable',
     'PaymentQueueBackpressureHighWater',
     'PaymentQueueNearCapacity',
+    // #1102 — backup staleness alerting
+    'BackupStale',
+    'BackupCriticallyStale',
+    'BackupNotRun',
   ])('%s alert rule exists', (alertName) => {
     expect(allAlertNames()).toContain(alertName);
   });
