@@ -4,6 +4,7 @@ import ErrorBoundary from "../components/ErrorBoundary";
 import StudentForm from "../components/StudentForm";
 import PageHero, { StatCard } from "../components/PageHero";
 import SseDegradedBanner from "../components/SseDegradedBanner";
+import RequireAdmin from "../components/RequireAdmin";
 import { usePaymentEvents } from "../hooks/usePaymentEvents";
 import { getSyncStatus, getPaymentSummary, getStudents, getStudent } from "../services/api";
 import {
@@ -29,7 +30,7 @@ const STATUS_BADGE = {
   unpaid:  { cls: "badge badge-danger",  label: "Unpaid" },
 };
 
-export default function Dashboard() {
+function Dashboard() {
   const [lastSyncAt, setLastSyncAt]           = useState(null);
   const [syncMsg, setSyncMsg]                 = useState(null);
   const [summary, setSummary]                 = useState(null);
@@ -494,5 +495,13 @@ export default function Dashboard() {
         />
       )}
     </>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <RequireAdmin>
+      <Dashboard />
+    </RequireAdmin>
   );
 }
