@@ -2,7 +2,6 @@
 
 const mongoose = require('mongoose');
 const softDelete = require('../utils/softDelete');
-const memoEncryption = require('../utils/memoEncryption');
 const tenantScope = require('../plugins/tenantScope');
 const {
   CONFIRMATION_STATES,
@@ -287,19 +286,6 @@ paymentSchema.pre('save', async function () {
     this.excessAmount = normalize(this.excessAmount);
   }
 
-  // Encrypt memo field at rest using application-level AES-256-GCM encryption.
-  // Encryption is a no-op when MEMO_ENCRYPTION_KEY is not set (graceful degradation).
-  if (this.isModified('memo') && this.memo != null) {
-    this.memo = memoEncryption.encryptMemo(this.memo);
-  }
-});
-
-// Decrypt memo transparently after loading from the database.
-// This runs for find(), findOne(), findById(), etc.
-paymentSchema.post('init', function () {
-  if (this.memo != null) {
-    this.memo = memoEncryption.decryptMemo(this.memo);
-  }
 });
 
 // Issue #669: Send payment receipt email on SUCCESS transition

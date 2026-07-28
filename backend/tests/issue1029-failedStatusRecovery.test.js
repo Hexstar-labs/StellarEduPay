@@ -62,10 +62,6 @@ describe('Issue #1029 — paymentStatus transition tables', () => {
 // paymentModelValidation.test.js does, without needing a live database.
 
 jest.mock('../src/utils/softDelete', () => (schema) => schema);
-jest.mock('../src/utils/memoEncryption', () => ({
-  encryptMemo: (v) => v,
-  decryptMemo: (v) => v,
-}));
 jest.mock('../src/plugins/tenantScope', () => () => {});
 jest.mock('../src/services/paymentConfirmationStateMachine', () => ({
   CONFIRMATION_STATES: {

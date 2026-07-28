@@ -106,8 +106,6 @@ Transaction Details:
   Memo:   "STU001"   ← Student ID for automatic matching
 ```
 
-Memos are optionally encrypted at rest for privacy (see `MEMO_ENCRYPTION_KEY` in env vars).
-
 ### Read-Only Blockchain Integration
 
 The backend **never holds the school's private key**. It only:
@@ -171,7 +169,6 @@ Assets are configured per school and can be extended in [`backend/src/config/ste
 - Audit log with pagination, date filtering, and TTL cleanup
 - Soft-delete for students and fee structures
 - PII protection (student data redaction)
-- Memo encryption at rest
 
 **Developer Experience**
 - OpenAPI/Swagger docs at `/api/docs` (development mode)
@@ -413,7 +410,6 @@ node scripts/seed-test-data.js --clean  # Drop and recreate
 |----------|---------|-------------|
 | `MIN_PAYMENT_AMOUNT` | `0.01` | Minimum payment in XLM/USDC |
 | `MAX_PAYMENT_AMOUNT` | `100000` | Maximum payment in XLM/USDC |
-| `MEMO_ENCRYPTION_KEY` | — | 32-byte hex key for encrypting memos at rest |
 
 ### Background Jobs
 
@@ -619,7 +615,6 @@ Common error codes: `NOT_FOUND`, `VALIDATION_ERROR`, `DUPLICATE_TX`, `TX_FAILED`
 - **Rate limiting**: Per-IP rate limiting with Redis persistence; dedicated stricter limit on `/api/payments/verify`.
 - **Request queue + circuit breaker**: Protects downstream services from overload.
 - **Webhook HMAC signatures**: Outbound webhooks are signed with `HMAC-SHA256` so receivers can verify authenticity.
-- **Memo encryption**: Student IDs in memos can be encrypted at rest with AES-256.
 - **No private key storage**: The backend never holds the school's Stellar secret key.
 - **Proxy trust**: Configurable `TRUSTED_PROXY_HOPS` prevents IP spoofing via `X-Forwarded-For`.
 - **Body size limit**: Configurable `MAX_BODY_SIZE` to prevent request flood attacks.
@@ -790,7 +785,7 @@ node scripts/migrate.js
 
 Migrations are idempotent — safe to run repeatedly. The runner skips already-applied migrations.
 
-Current migrations include: audit log TTL index, student indexes, idempotency key TTL, payment intent TTL, report indexes, pending verification indexes, memo encryption backfill, student soft-delete backfill, school slug uniqueness, webhook secret seeding, and audit log compound index.
+Current migrations include: audit log TTL index, student indexes, idempotency key TTL, payment intent TTL, report indexes, pending verification indexes, student soft-delete backfill, school slug uniqueness, webhook secret seeding, and audit log compound index.
 
 ---
 

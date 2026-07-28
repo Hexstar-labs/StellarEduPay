@@ -108,7 +108,6 @@ When the backend syncs or verifies a transaction, it:
 **Important constraints:**
 - The memo must match a student ID exactly (case-sensitive).
 - Memos are scoped to a school — the same memo value can exist across different schools without collision.
-- If `MEMO_ENCRYPTION_KEY` is set in `.env`, memos are AES-256-GCM encrypted before being stored. The Stellar memo itself is always plain text; encryption only applies to the value stored in MongoDB.
 
 ---
 
