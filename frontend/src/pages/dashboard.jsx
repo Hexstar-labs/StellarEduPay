@@ -3,6 +3,8 @@ import SyncButton from "../components/SyncButton";
 import ErrorBoundary from "../components/ErrorBoundary";
 import StudentForm from "../components/StudentForm";
 import PageHero, { StatCard } from "../components/PageHero";
+import SseDegradedBanner from "../components/SseDegradedBanner";
+import { usePaymentEvents } from "../hooks/usePaymentEvents";
 import { getSyncStatus, getPaymentSummary, getStudents, getStudent } from "../services/api";
 import {
   IconUsers, IconCheck, IconAlertTriangle, IconDollarSign,
@@ -45,6 +47,17 @@ export default function Dashboard() {
   const [error, setError]                     = useState(null);
   const [editingStudent, setEditingStudent]   = useState(null);
   const [editingStudentData, setEditingStudentData] = useState(null);
+
+  // Real-time SSE — surfaces degraded state when Redis pub/sub is unavailable (Issue #1054).
+  const { degraded } = usePaymentEvents({
+    onEvent: (type) => {
+      // Refresh summary/students whenever a payment or dispute event arrives.
+      if (type === 'payment' || type.startsWith('dispute')) {
+        fetchSummary();
+        fetchStudents(page, debouncedSearch, statusFilter, classFilter);
+      }
+    },
+  });
 
   const searchDebounceRef = useRef(null);
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -157,8 +170,8 @@ export default function Dashboard() {
 
   return (
     <>
-      <style>{`
-        @keyframes dashFadeUp {
+      <SseDegradedBanner degraded={degraded} />
+      <style>{`        @keyframes dashFadeUp {
           from { opacity: 0; transform: translateY(10px); }
           to   { opacity: 1; transform: translateY(0); }
         }

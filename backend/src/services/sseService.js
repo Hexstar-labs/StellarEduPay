@@ -18,6 +18,11 @@
  * When REDIS_HOST is not configured the service degrades to single-process
  * mode: emit() fans out locally and cross-replica delivery is unavailable
  * (correct for a single replica).
+ *
+ * Issue #1054: When Redis pub/sub becomes unavailable, all locally-connected
+ * clients receive an explicit `sse.degraded` event so the frontend can render
+ * a visible warning banner. A corresponding `sse.recovered` event is emitted
+ * when the publisher reconnects.
  */
 
 const Redis = require('ioredis');
@@ -46,14 +51,75 @@ const redisConfig = getRedisConnectionOptions({ maxRetriesPerRequest: null });
 let publisher = null;
 let subscriber = null;
 
+// ── Degraded-mode tracking (Issue #1054) ────────────────────────────────────
+// Tracks whether the Redis publisher is currently reachable. Only meaningful
+// when redisEnabled is true; single-process deployments are always "healthy"
+// because they never relied on Redis for fan-out.
+let _publisherHealthy = !redisEnabled; // true in single-process mode
+
+/**
+ * Broadcast a synthetic system event to every locally-connected client across
+ * all schools. Used exclusively for degraded/recovered signals — do NOT route
+ * these through Redis pub/sub (the whole point is that Redis may be down).
+ */
+function _broadcastSystemEvent(event, data) {
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const set of clients.values()) {
+    for (const res of set) {
+      try {
+        res.write(payload);
+      } catch {
+        // Broken connections are cleaned up by the next fanout or heartbeat.
+      }
+    }
+  }
+}
+
+function _onPublisherDown(reason) {
+  if (_publisherHealthy) {
+    _publisherHealthy = false;
+    logger.warn('SSE Redis publisher unavailable — broadcasting degraded signal to clients', { reason });
+    _broadcastSystemEvent('sse.degraded', {
+      message: 'Real-time updates are temporarily limited to this server instance. '
+        + 'Some events may not appear until connectivity is restored.',
+      reason,
+    });
+  }
+}
+
+function _onPublisherUp() {
+  if (!_publisherHealthy) {
+    _publisherHealthy = true;
+    logger.info('SSE Redis publisher reconnected — broadcasting recovered signal to clients');
+    _broadcastSystemEvent('sse.recovered', {
+      message: 'Real-time updates have been restored.',
+    });
+  }
+}
+
 if (redisEnabled) {
   publisher = new Redis(redisConfig);
   subscriber = new Redis(redisConfig);
 
-  for (const [name, conn] of [['publisher', publisher], ['subscriber', subscriber]]) {
-    conn.on('error', (err) => logger.error(`Redis ${name} error`, { error: err.message }));
+  // Publisher health tracking for Issue #1054.
+  // ioredis fires 'error' on connection failure and 'ready' when (re)connected.
+  publisher.on('error', (err) => {
+    logger.error('Redis publisher error', { error: err.message });
+    _onPublisherDown(err.message);
+  });
+  publisher.on('ready', () => {
+    _onPublisherUp();
+  });
+  publisher.on('end', () => {
+    logger.error('Redis publisher connection ended');
+    _onPublisherDown('connection ended');
+  });
+
+  subscriber.on('error', (err) => logger.error('Redis subscriber error', { error: err.message }));
+
+  for (const conn of [publisher, subscriber]) {
     conn.connect().catch((err) =>
-      logger.error(`Redis ${name} connect failed`, { error: err.message })
+      logger.error('Redis SSE connection failed', { error: err.message })
     );
   }
 
@@ -67,6 +133,16 @@ if (redisEnabled) {
       logger.error('Failed to handle SSE pub/sub message', { error: err.message, channel });
     }
   });
+}
+
+/**
+ * Returns true when Redis-backed cross-replica delivery is operating normally,
+ * or when running in single-process mode (no Redis configured).
+ * Exposed for /health reporting and for newly-connected clients that missed
+ * the degraded broadcast.
+ */
+function isRedisHealthy() {
+  return _publisherHealthy;
 }
 
 function subscribeSchool(schoolId) {
@@ -112,6 +188,25 @@ function addClient(schoolId, res) {
     subscribeSchool(schoolId);
   }
   set.add(res);
+
+  // Issue #1054: If Redis is already degraded when this client connects, send
+  // an immediate degraded signal so the client doesn't silently miss events
+  // that were published before it arrived.
+  if (redisEnabled && !_publisherHealthy) {
+    try {
+      res.write(
+        'event: sse.degraded\ndata: '
+        + JSON.stringify({
+            message: 'Real-time updates are temporarily limited to this server instance. '
+              + 'Some events may not appear until connectivity is restored.',
+            reason: 'degraded at connect time',
+          })
+        + '\n\n'
+      );
+    } catch {
+      // Connection already broken — removeClient will clean it up on next heartbeat.
+    }
+  }
 
   // Per-connection heartbeat: a comment line keeps idle connections (and the
   // proxies in front of them) alive without producing a client-visible event.
@@ -202,6 +297,9 @@ function emit(schoolId, event, data, correlationId) {
           schoolId,
           correlationId: correlationId || enrichedData?.correlationId || null,
         });
+        // Issue #1054: signal all locally-connected clients that cross-replica
+        // delivery is degraded so they can surface a visible warning.
+        _onPublisherDown(err.message);
         fanout(schoolId, event, enrichedData);
       });
     return;
@@ -261,7 +359,9 @@ module.exports = {
   getStats,
   close,
   closeAll,
+  isRedisHealthy,
   MAX_CONNECTIONS_PER_SCHOOL,
   // Exposed for testing
   _fanout: fanout,
+  _broadcastSystemEvent,
 };
