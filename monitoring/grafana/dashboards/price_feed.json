@@ -1,0 +1,156 @@
+{
+  "title": "StellarEduPay — Price Feed Health",
+  "uid": "stellaredupay-price-feed",
+  "description": "Currency conversion service health — staleness, last successful fetch, and error rate. Paired with monitoring/alerts/price_feed.yml. Consult this dashboard when paged by PriceFeedStalenessWarning, PriceFeedStale, or PriceFeedNoRecentSuccess. Runbook: https://github.com/manuelusman73-png/StellarEduPay/blob/main/docs/runbooks/price-feed-staleness.md",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Feed Staleness (seconds) by Provider",
+      "description": "Mirrors the PriceFeedStalenessWarning (>300 s) and PriceFeedStale alert thresholds. A rising value means no fresh rate has been fetched. Alert fires after 2 min above 300 s.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "price_feed_staleness_seconds",
+          "legendFormat": "{{provider}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 2 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "yellow", "value": 300 },
+              { "color": "red", "value": 900 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Stale Flag by Provider (1 = cache exhausted)",
+      "description": "price_feed_stale is set to 1 only when the stale-while-revalidate window is exhausted. At that point fiat amounts show 'rate unavailable'. Mirrors the PriceFeedStale alert (fires after 15 min at 1).",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "price_feed_stale",
+          "legendFormat": "{{provider}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "OK", "color": "green" }, "1": { "text": "STALE", "color": "red" } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 3,
+      "title": "Time Since Last Successful Fetch (seconds) by Provider",
+      "description": "Derived from price_feed_last_success_timestamp. Used by the PriceFeedNoRecentSuccess alert (fires when > 600 s for 5 min). A frozen value after a process restart indicates the fetch loop is not running.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "time() - price_feed_last_success_timestamp",
+          "legendFormat": "{{provider}} — age (s)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 2 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "yellow", "value": 600 },
+              { "color": "red", "value": 1800 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Last Successful Fetch Timestamp by Provider",
+      "description": "Absolute timestamp of the most recent successful rate fetch. A value far in the past during an incident immediately shows when feeds last worked.",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "price_feed_last_success_timestamp",
+          "legendFormat": "{{provider}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeAsLocal"
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 5,
+      "title": "Price Feed Fetch Rate (success vs error) by Provider",
+      "description": "Rate of fetch attempts over the last 5 minutes split by outcome. A drop in successes or a spike in errors is the leading indicator for the staleness metrics above.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 16, "w": 24, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (provider, outcome) (rate(price_feed_fetch_total[5m]))",
+          "legendFormat": "{{provider}} — {{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "lineWidth": 2 }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".*error.*" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": ".*success.*" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    }
+  ]
+}
