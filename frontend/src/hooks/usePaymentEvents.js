@@ -2,30 +2,40 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
+// After this many consecutive closed-connection errors we stop retrying and
+// surface a 'failed' status so the UI can prompt the user to refresh.
+const MAX_RETRIES = 5;
+
 /**
  * usePaymentEvents
  *
  * Connects to the backend SSE endpoint and surfaces:
- *   - `degraded`  (boolean) — true when the backend has signalled that Redis
- *                             pub/sub is unavailable and cross-replica delivery
- *                             is limited (Issue #1054).
- *   - `onEvent`   (function) — optional per-event callback, receives (type, data).
+ *   - `degraded`          (boolean) — true when the backend has signalled that
+ *                                      Redis pub/sub is unavailable (Issue #1054).
+ *   - `connectionStatus`  (string)  — 'connected' | 'reconnecting' | 'failed'.
+ *                                      'reconnecting' while back-off retries are
+ *                                      in flight; 'failed' after MAX_RETRIES
+ *                                      consecutive failures with no successful open.
+ *   - `onEvent`           (function) — optional per-event callback, receives (type, data).
  *
  * The hook handles:
- *   - Automatic reconnect with exponential back-off on unexpected stream close.
+ *   - Automatic reconnect with exponential back-off (1 s → 2 s → … → 30 s cap).
+ *   - After MAX_RETRIES the connection is abandoned and status becomes 'failed'.
  *   - Resetting the degraded flag on an `sse.recovered` event.
  *   - Cleanup on unmount.
  *
  * @param {object}   options
  * @param {boolean}  [options.enabled=true]  - Set false to skip connecting (e.g. unauthenticated pages).
  * @param {Function} [options.onEvent]        - Called with (eventType, data) for every non-system event.
- * @returns {{ degraded: boolean }}
+ * @returns {{ degraded: boolean, connectionStatus: 'connected'|'reconnecting'|'failed' }}
  */
 export function usePaymentEvents({ enabled = true, onEvent } = {}) {
   const [degraded, setDegraded] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState('connected');
   const esRef = useRef(null);
   const retryRef = useRef(null);
   const retryDelayRef = useRef(1000);
+  const retryCountRef = useRef(0);
   const onEventRef = useRef(onEvent);
 
   // Keep the callback ref current without re-connecting the stream.
@@ -85,15 +95,27 @@ export function usePaymentEvents({ enabled = true, onEvent } = {}) {
       if (es.readyState === EventSource.CLOSED) {
         esRef.current = null;
         es.close();
+
+        retryCountRef.current += 1;
+
+        if (retryCountRef.current > MAX_RETRIES) {
+          // Give up — tell the UI to prompt the user to refresh.
+          setConnectionStatus('failed');
+          return;
+        }
+
+        setConnectionStatus('reconnecting');
         const delay = retryDelayRef.current;
         retryDelayRef.current = Math.min(delay * 2, 30000);
         retryRef.current = setTimeout(connect, delay);
       }
     });
 
-    // Reset back-off on a successful open.
+    // Reset back-off counters on a successful open.
     es.addEventListener('open', () => {
       retryDelayRef.current = 1000;
+      retryCountRef.current = 0;
+      setConnectionStatus('connected');
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -111,5 +133,5 @@ export function usePaymentEvents({ enabled = true, onEvent } = {}) {
     };
   }, [enabled, connect]);
 
-  return { degraded };
+  return { degraded, connectionStatus };
 }

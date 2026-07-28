@@ -48,8 +48,8 @@ export default function Dashboard() {
   const [editingStudent, setEditingStudent]   = useState(null);
   const [editingStudentData, setEditingStudentData] = useState(null);
 
-  // Real-time SSE — surfaces degraded state when Redis pub/sub is unavailable (Issue #1054).
-  const { degraded } = usePaymentEvents({
+  // Real-time SSE — surfaces degraded/reconnecting/failed state (Issues #1054, #1078).
+  const { degraded, connectionStatus } = usePaymentEvents({
     onEvent: (type) => {
       // Refresh summary/students whenever a payment or dispute event arrives.
       if (type === 'payment' || type.startsWith('dispute')) {
@@ -170,7 +170,7 @@ export default function Dashboard() {
 
   return (
     <>
-      <SseDegradedBanner degraded={degraded} />
+      <SseDegradedBanner degraded={degraded} connectionStatus={connectionStatus} />
       <style>{`        @keyframes dashFadeUp {
           from { opacity: 0; transform: translateY(10px); }
           to   { opacity: 1; transform: translateY(0); }
