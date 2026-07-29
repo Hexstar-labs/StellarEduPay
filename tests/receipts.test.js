@@ -114,6 +114,55 @@ describe('receiptService.createReceipt()', () => {
   });
 });
 
+// ── verifyReceiptSignature tests — issue #1195 ────────────────────────────────
+
+describe('receiptService.verifyReceiptSignature() — #1195 length-mismatch fix', () => {
+  const { generateReceiptSignature, verifyReceiptSignature } = require('../backend/src/services/receiptService');
+
+  const RECEIPT = {
+    txHash: 'abc123def456abc123def456abc123def456abc123def456abc123def456abc1',
+    studentId: 'STU001',
+    schoolId: 'SCH-001',
+    amount: 250,
+    assetCode: 'XLM',
+    confirmedAt: new Date('2026-03-24T10:00:00Z'),
+  };
+
+  test('returns true for a genuine (correct-length) signature', () => {
+    const receiptWithSig = { ...RECEIPT, signature: generateReceiptSignature(RECEIPT) };
+    expect(verifyReceiptSignature(receiptWithSig)).toBe(true);
+  });
+
+  test('returns false — not throw — for a truncated signature (shorter than expected)', () => {
+    const goodSig = generateReceiptSignature(RECEIPT);
+    const truncated = goodSig.slice(0, goodSig.length - 4); // 4 chars shorter
+    const receiptWithTruncated = { ...RECEIPT, signature: truncated };
+    expect(() => verifyReceiptSignature(receiptWithTruncated)).not.toThrow();
+    expect(verifyReceiptSignature(receiptWithTruncated)).toBe(false);
+  });
+
+  test('returns false — not throw — for an extended signature (longer than expected)', () => {
+    const goodSig = generateReceiptSignature(RECEIPT);
+    const extended = goodSig + 'deadbeef';
+    const receiptWithExtended = { ...RECEIPT, signature: extended };
+    expect(() => verifyReceiptSignature(receiptWithExtended)).not.toThrow();
+    expect(verifyReceiptSignature(receiptWithExtended)).toBe(false);
+  });
+
+  test('returns false for a same-length but tampered signature', () => {
+    const goodSig = generateReceiptSignature(RECEIPT);
+    // Flip the last two hex chars while keeping the same length.
+    const tampered = goodSig.slice(0, -2) + (goodSig.slice(-2) === 'ff' ? '00' : 'ff');
+    const receiptWithTampered = { ...RECEIPT, signature: tampered };
+    expect(verifyReceiptSignature(receiptWithTampered)).toBe(false);
+  });
+
+  test('returns false when signature is absent', () => {
+    expect(verifyReceiptSignature({ ...RECEIPT, signature: undefined })).toBe(false);
+    expect(verifyReceiptSignature({ ...RECEIPT, signature: '' })).toBe(false);
+  });
+});
+
 describe('receiptService.getReceiptByTxHash()', () => {
   test('queries by txHash and schoolId', async () => {
     const mockReceipt = { txHash: PAYMENT.txHash, schoolId: 'SCH-001' };
