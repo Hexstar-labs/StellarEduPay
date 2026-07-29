@@ -709,6 +709,44 @@ describe('PATCH /api/disputes/:id/resolve — state machine, auth, audit, SSE, p
     expect(payment.status).toBe('DISPUTED');
     expect(payment.save).toHaveBeenCalled();
   });
+
+  // ── open → under_review: same-target payment status is a no-op, not an error
+
+  test('200 — open→under_review succeeds when payment is already DISPUTED (idempotent sync)', async () => {
+    // Both 'open' and 'under_review' map to the DISPUTED payment status.
+    // When flagDispute already set the payment to DISPUTED, the subsequent
+    // open→under_review transition must NOT throw — it should be a no-op.
+    const underReview = {
+      ...MOCK_DISPUTE,
+      status:         'under_review',
+      resolvedBy:     'admin@school.test',
+      resolutionNote: 'Investigating',
+      txHash:         MOCK_DISPUTE.txHash,
+    };
+    Dispute.findOne.mockResolvedValueOnce({ ...MOCK_DISPUTE, status: 'open' });
+    Dispute.findOneAndUpdate.mockResolvedValueOnce(underReview);
+
+    // Payment is already DISPUTED — this is the exact state that previously
+    // caused _syncPaymentStatus to throw INVALID_TRANSITION.
+    const payment = mockLoadedPayment('DISPUTED');
+    Payment.findOne.mockResolvedValueOnce(payment);
+
+    const res = await api('patch', `/api/disputes/${MOCK_DISPUTE._id}/resolve`)
+      .set('Authorization', `Bearer ${ADMIN_TOKEN}`)
+      .send({ resolutionNote: 'Investigating', status: 'under_review' });
+
+    // Must succeed — the dispute moved to under_review even though payment
+    // was already DISPUTED.
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('under_review');
+
+    // _syncPaymentStatus should have loaded the payment to check its status…
+    expect(Payment.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ txHash: MOCK_DISPUTE.txHash }),
+    );
+    // …but must NOT have called save() because status was already DISPUTED.
+    expect(payment.save).not.toHaveBeenCalled();
+  });
 });
 
 // ─── Dispute-hold: notification on creation ───────────────────────────────────

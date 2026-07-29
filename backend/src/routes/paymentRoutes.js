@@ -58,7 +58,7 @@ const {
 } = require("../middleware/validate");
 const { resolveSchool } = require("../middleware/schoolContext");
 const idempotencyMiddleware = require("../middleware/idempotency");
-const { requireAdminAuth } = require("../middleware/auth");
+const { requireAdminAuth, requireSchoolAuth } = require("../middleware/auth");
 const { auditContext } = require("../middleware/auditContext");
 const { strictLimiter, verifyLimiter } = require("../middleware/rateLimiter");
 
