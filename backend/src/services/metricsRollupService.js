@@ -174,7 +174,7 @@ let _timer = null;
 
 async function _runScheduledReconciliation() {
   const School = require('../models/schoolModel');
-  const schools = await School.find({}, 'schoolId').lean();
+  const schools = await School.find({ isActive: true }, 'schoolId').lean();
   const endDate   = _dayKey(new Date());
   const startDate = _dayKey(new Date(Date.now() - 32 * 86400000));
   for (const school of schools) {
