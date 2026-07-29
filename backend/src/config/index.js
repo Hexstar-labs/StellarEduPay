@@ -9,20 +9,6 @@
  * (scripts/migrate-default-school.js) which seeds the first school from it.
  */
 
-// ── Unsupported / broken features ────────────────────────────────────────────
-// MEMO_ENCRYPTION_KEY is not supported. AES-256-GCM output (IV + ciphertext +
-// auth tag) base64url-encoded is always ≥ 40 characters, which exceeds
-// Stellar's hard 28-byte MEMO_TEXT limit. The sync engine also only processes
-// memo_type === 'text', so encrypted hash memos are silently dropped.
-// Remove MEMO_ENCRYPTION_KEY from your environment to start the server.
-if (process.env.MEMO_ENCRYPTION_KEY) {
-  throw new Error(
-    "[Config] MEMO_ENCRYPTION_KEY is set but memo encryption is not supported. " +
-    "Encrypted memos always exceed Stellar's 28-byte MEMO_TEXT limit and will " +
-    "silently break payment matching. Remove MEMO_ENCRYPTION_KEY from your environment.",
-  );
-}
-
 // ── Required variables ────────────────────────────────────────────────────────
 const REQUIRED = ["MONGO_URI"];
 

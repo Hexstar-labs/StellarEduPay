@@ -61,9 +61,12 @@ export default function PaymentForm() {
   // #1118 — wallets that cannot send free-text memos can switch the QR code to
   // MEMO_ID or MEMO_HASH; all three decode back to the same payment reference.
   const [memoType, setMemoType]               = useState("MEMO_TEXT");
-  const errorRef  = useRef(null);
+  const errorRef    = useRef(null);
   const debounceRef = useRef(null);
   const qrWrapperRef = useRef(null);
+  // Holds the AbortController for the in-flight lookup so a superseded request
+  // can be cancelled before the next one starts (race-condition fix).
+  const lookupAbortRef = useRef(null);
 
   function handleStudentIdChange(e) {
     const value = e.target.value;
@@ -72,11 +75,21 @@ export default function PaymentForm() {
   }
 
   useEffect(() => {
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      // Cancel any in-flight lookup when the component unmounts.
+      lookupAbortRef.current?.abort();
+    };
   }, []);
 
   const lookupStudent = useCallback(async (id) => {
     if (!id.trim()) return;
+
+    // Cancel the previous in-flight request (if any) before starting a new one.
+    lookupAbortRef.current?.abort();
+    const controller = new AbortController();
+    lookupAbortRef.current = controller;
+
     setError("");
     setStudent(null);
     setInstructions(null);
@@ -85,25 +98,38 @@ export default function PaymentForm() {
     setLoading(true);
     setPaymentsLoading(true);
     try {
+      const signal = controller.signal;
       const [stuRes, instrRes, payRes, balRes] = await Promise.all([
-        getStudent(id),
-        getPaymentInstructions(id),
-        getStudentPayments(id),
-        getStudentBalance(id).catch(() => null),
+        getStudent(id, { signal }),
+        getPaymentInstructions(id, { signal }),
+        getStudentPayments(id, { signal }),
+        getStudentBalance(id, { signal }).catch((err) => {
+          // Propagate abort so the outer catch can detect it; swallow other errors.
+          if (err?.name === "CanceledError" || err?.code === "ERR_CANCELED") throw err;
+          return null;
+        }),
       ]);
       setStudent(stuRes.data);
       setInstructions(instrRes.data);
       setPayments(payRes.data?.payments ?? payRes.data ?? []);
       setHasDeletedPayments(balRes?.data?.hasDeletedPayments === true);
     } catch (err) {
+      // Axios names aborted requests "CanceledError" (axios ≥ 1.x) with code
+      // "ERR_CANCELED".  Silently ignore them — a newer request is already
+      // in flight and will update the UI when it resolves.
+      if (err?.name === "CanceledError" || err?.code === "ERR_CANCELED") return;
       setError(
         getErrorMessage(err.response?.data?.code, err.response?.data?.error) ||
         "Student not found. Please check the ID and try again."
       );
       errorRef.current?.focus();
     } finally {
-      setLoading(false);
-      setPaymentsLoading(false);
+      // Only clear loading state when *this* controller is still the current
+      // one (i.e. it hasn't been superseded by a newer lookup).
+      if (lookupAbortRef.current === controller) {
+        setLoading(false);
+        setPaymentsLoading(false);
+      }
     }
   }, []);
 

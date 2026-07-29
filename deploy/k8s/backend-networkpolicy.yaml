@@ -1,0 +1,77 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-network-policy
+  labels:
+    app: backend
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Allow inbound traffic from the ingress controller only.
+    # Both selectors are in the same list entry (AND semantics): the source
+    # pod must be in the ingress-nginx namespace AND carry the ingress-nginx
+    # pod label. Update the namespaceSelector label if your ingress
+    # controller runs in a different namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 5000
+    # Allow inbound traffic from the frontend pod when deployed in the
+    # same namespace.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - protocol: TCP
+          port: 5000
+
+  egress:
+    # DNS — required for all service-name resolution (MongoDB Atlas,
+    # Horizon, Redis service name, etc.).
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Redis — distributed locking and leader election (distributedLock.js /
+    # leaderElection.js). Restricted to pods labelled app=redis so that no
+    # other pod in the namespace can be targeted by this rule.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+
+    # MongoDB — database connection (Atlas or in-cluster).
+    - ports:
+        - protocol: TCP
+          port: 27017
+
+    # HTTPS — Stellar Horizon API, external webhook deliveries, price feeds,
+    # and any other TLS-secured external service.
+    - ports:
+        - protocol: TCP
+          port: 443
+
+    # SMTP — transactional email (STARTTLS on 587, implicit TLS on 465).
+    - ports:
+        - protocol: TCP
+          port: 587
+        - protocol: TCP
+          port: 465
