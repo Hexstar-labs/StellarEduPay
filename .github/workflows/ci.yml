@@ -100,4 +100,7 @@ jobs:
 
       - run: cd frontend && npm ci && cd ..
 
+      - name: Syntax check
+        run: npm run check:syntax
+
       - run: npm test
