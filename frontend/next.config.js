@@ -68,7 +68,6 @@ const BACKEND_ORIGIN = process.env.BACKEND_PROXY_TARGET || 'http://localhost:500
 const nextConfig = {
   // Produces a self-contained build in .next/standalone — required for Docker
   output: 'standalone',
-  eslint: { ignoreDuringBuilds: true },
   // Same-origin API proxy: browser → /api/* (this origin) → backend. Keeps
   // requests first-party so HttpOnly SameSite=Strict auth cookies are sent.
   async rewrites() {
