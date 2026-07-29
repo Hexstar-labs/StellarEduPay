@@ -6,57 +6,101 @@ const Outbox = require('../models/outboxModel');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger').child('RefundService');
 const { amountsEqual } = require('../utils/stellarAmount');
+const lock = require('./distributedLock');
+
+// TTL for the per-payment refund lock. Long enough for the DB operations to
+// complete; short enough to auto-expire after a crash without blocking permanently.
+const REFUND_LOCK_TTL_MS = 30_000;
+
+// Statuses that represent an active (non-failed) refund. A payment that already
+// has one of these is not eligible for a new refund request.
+const ACTIVE_REFUND_STATUSES = ['approval_pending', 'pending', 'submitted', 'confirmed'];
+
+/**
+ * Return a deterministic Redis key for a given payment refund operation.
+ * @param {string} schoolId
+ * @param {string} originalTxHash
+ */
+function refundLockKey(schoolId, originalTxHash) {
+  return `refund:lock:${schoolId}:${originalTxHash}`;
+}
 
 async function initiateRefund(schoolId, originalTxHash, studentId, amount, reason, initiatedBy) {
-  const payment = await Payment.findOne({ schoolId, txHash: originalTxHash, status: 'SUCCESS' });
-  if (!payment) {
-    const err = new Error('Original payment not found or not in SUCCESS status');
-    err.code = 'PAYMENT_NOT_FOUND';
+  const lockKey = refundLockKey(schoolId, originalTxHash);
+  const acquired = await lock.acquire(lockKey, REFUND_LOCK_TTL_MS);
+  if (!acquired) {
+    const err = new Error('A refund for this payment is already being processed. Please try again shortly.');
+    err.code = 'REFUND_LOCK_CONTENDED';
     throw err;
   }
 
-  if (!amountsEqual(amount, payment.amount)) {
-    const err = new Error('Refund amount does not match original payment amount');
-    err.code = 'AMOUNT_MISMATCH';
-    throw err;
-  }
+  const { token } = acquired;
+  try {
+    const payment = await Payment.findOne({ schoolId, txHash: originalTxHash, status: 'SUCCESS' });
+    if (!payment) {
+      const err = new Error('Original payment not found or not in SUCCESS status');
+      err.code = 'PAYMENT_NOT_FOUND';
+      throw err;
+    }
 
-  const refund = await Refund.create({
-    schoolId,
-    originalTxHash,
-    studentId,
-    amount,
-    status: 'approval_pending',
-    reason,
-    initiatedBy,
-  });
+    if (!amountsEqual(amount, payment.amount)) {
+      const err = new Error('Refund amount does not match original payment amount');
+      err.code = 'AMOUNT_MISMATCH';
+      throw err;
+    }
 
-  // Update payment status to REFUNDED to reflect the in-flight refund.
-  // Uses adminOverride to allow the SUCCESS → REFUNDED transition via the proper
-  // .save() path (mirroring how dispute resolution handles payment status sync).
-  payment.$locals.adminOverride = true;
-  payment.status = 'REFUNDED';
-  await payment.save();
+    // Guard: reject if an active (non-failed) refund already exists for this payment.
+    const existingRefund = await Refund.findOne({
+      schoolId,
+      originalTxHash,
+      status: { $in: ACTIVE_REFUND_STATUSES },
+    });
+    if (existingRefund) {
+      const err = new Error(`A refund for this payment already exists (status: ${existingRefund.status}, id: ${existingRefund._id})`);
+      err.code = 'REFUND_ALREADY_EXISTS';
+      err.refundId = existingRefund._id.toString();
+      throw err;
+    }
 
-  const eventId = uuidv4();
-  await Outbox.create({
-    eventId,
-    eventType: 'refund.initiated',
-    aggregateId: originalTxHash,
-    aggregateType: 'payment',
-    payload: {
-      refundId: refund._id.toString(),
+    const refund = await Refund.create({
       schoolId,
       originalTxHash,
       studentId,
       amount,
+      status: 'approval_pending',
       reason,
       initiatedBy,
-    },
-  });
+    });
 
-  logger.info('Refund initiated', { schoolId, originalTxHash, studentId, refundId: refund._id });
-  return refund;
+    // Update payment status to REFUNDED to reflect the in-flight refund.
+    // Uses adminOverride to allow the SUCCESS → REFUNDED transition via the proper
+    // .save() path (mirroring how dispute resolution handles payment status sync).
+    payment.$locals.adminOverride = true;
+    payment.status = 'REFUNDED';
+    await payment.save();
+
+    const eventId = uuidv4();
+    await Outbox.create({
+      eventId,
+      eventType: 'refund.initiated',
+      aggregateId: originalTxHash,
+      aggregateType: 'payment',
+      payload: {
+        refundId: refund._id.toString(),
+        schoolId,
+        originalTxHash,
+        studentId,
+        amount,
+        reason,
+        initiatedBy,
+      },
+    });
+
+    logger.info('Refund initiated', { schoolId, originalTxHash, studentId, refundId: refund._id });
+    return refund;
+  } finally {
+    await lock.release(lockKey, token);
+  }
 }
 
 async function approveRefund(refundId, approvedBy) {
@@ -178,4 +222,6 @@ module.exports = {
   updateRefundStatus,
   getRefundsByPayment,
   getRefundsBySchool,
+  refundLockKey,
+  ACTIVE_REFUND_STATUSES,
 };
