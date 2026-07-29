@@ -182,7 +182,9 @@ async function getJobDetails(jobId) {
     const job = await queue.getJob(jobId);
 
     if (!job) {
-      return null;
+      const err = new Error(`Job ${jobId} not found`);
+      err.code = 'NOT_FOUND';
+      throw err;
     }
 
     const state = await job.getState();
@@ -267,12 +269,16 @@ async function retryJobImmediately(jobId) {
     const job = await queue.getJob(jobId);
 
     if (!job) {
-      throw new Error(`Job ${jobId} not found`);
+      const err = new Error(`Job ${jobId} not found`);
+      err.code = 'NOT_FOUND';
+      throw err;
     }
 
     const state = await job.getState();
     if (state !== 'failed') {
-      throw new Error(`Job ${jobId} is not in failed state (current: ${state})`);
+      const err = new Error(`Job ${jobId} is not in failed state (current: ${state})`);
+      err.code = 'VALIDATION_ERROR';
+      throw err;
     }
 
     await job.retry();
@@ -301,7 +307,9 @@ async function removeJob(jobId) {
     const job = await queue.getJob(jobId);
 
     if (!job) {
-      throw new Error(`Job ${jobId} not found`);
+      const err = new Error(`Job ${jobId} not found`);
+      err.code = 'NOT_FOUND';
+      throw err;
     }
 
     await job.remove();
