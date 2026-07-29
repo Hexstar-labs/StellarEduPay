@@ -30,7 +30,10 @@ function getDaysBetween(startDate, endDate) {
 
 async function getReport(req, res, next) {
   try {
-    const { startDate, endDate, format = 'json', schema_version, async: isAsync } = req.query;
+    const { startDate, endDate, format = 'json', schema_version } = req.query;
+    // req.query values are always strings; coerce explicitly so ?async=false is
+    // treated as false rather than the truthy string "false".
+    const isAsync = req.query.async === 'true';
     const isLargeReport = getDaysBetween(startDate, endDate) >= LARGE_REPORT_THRESHOLD_DAYS;
 
     if (isAsync && isLargeReport) {
