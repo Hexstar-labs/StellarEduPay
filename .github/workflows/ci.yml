@@ -114,4 +114,53 @@ jobs:
 
       - run: cd frontend && npm ci && cd ..
 
+      - name: Run migrations against CI MongoDB
+        working-directory: backend
+        run: npm run migrate
+
       - run: npm test
+
+  docker-build:
+    name: Docker image build & smoke test
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build backend image
+        run: docker build -t stellaredupay/backend:ci ./backend
+
+      - name: Smoke-test backend container
+        run: |
+          docker run -d \
+            --name backend-ci \
+            --network host \
+            -e JWT_SECRET=ci-smoke-test-secret \
+            -e MONGO_URI=mongodb://localhost:27017/stellaredupay_smoketest \
+            -e STELLAR_NETWORK=testnet \
+            -e SCHOOL_WALLET_ADDRESS=GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 \
+            stellaredupay/backend:ci
+          for i in $(seq 1 12); do
+            if curl -sf http://localhost:5000/health/live; then
+              echo ""
+              echo "Backend is live"
+              exit 0
+            fi
+            echo "Waiting for backend to start... ($i/12)"
+            sleep 5
+          done
+          docker logs backend-ci
+          echo "Backend failed to start within 60 seconds"
+          exit 1
+
+      - name: Build frontend image
+        run: docker build -t stellaredupay/frontend:ci ./frontend
