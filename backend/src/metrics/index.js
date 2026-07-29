@@ -389,6 +389,17 @@ const paymentProcessorQueueMaxDepth = new client.Gauge({
   },
 });
 
+// backup_last_success_timestamp_seconds — Unix timestamp of the most recent
+// successful backup. Updated by POST /api/internal/backup-heartbeat which
+// backup.sh calls on success. Initialised to 0 (meaning "never recorded") so
+// the BackupNotRun alert fires immediately when the process first starts and no
+// heartbeat has arrived yet. See issue #1102.
+const backupLastSuccessTimestamp = new client.Gauge({
+  name: 'backup_last_success_timestamp_seconds',
+  help: 'Unix timestamp of the most recent successful backup (0 = never recorded since process start)',
+  registers: [registry],
+});
+
 module.exports = {
   registry,
   mongoConnectionState,
@@ -414,4 +425,5 @@ module.exports = {
   horizonRequestDurationSeconds,
   webhookDeliveryTotal,
   notificationSentTotal,
+  backupLastSuccessTimestamp,
 };
