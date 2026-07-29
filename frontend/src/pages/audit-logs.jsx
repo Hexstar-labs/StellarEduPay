@@ -5,6 +5,7 @@ import {
   IconChevronLeft, IconChevronRight, IconAlertTriangle, IconCheck,
 } from "../components/Icons";
 import PageHero from "../components/PageHero";
+import RequireAdmin from "../components/RequireAdmin";
 
 function formatTimestamp(isoString) {
   if (!isoString) return "N/A";
@@ -35,7 +36,7 @@ function getActionLabel(action) {
 
 const ACTION_OPTIONS = Object.entries(ACTION_LABELS).map(([value, label]) => ({ value, label }));
 
-export default function AuditLogsPage() {
+function AuditLogsContent() {
   const [logs, setLogs]               = useState([]);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState(null);

@@ -6,6 +6,7 @@ import {
   IconChevronLeft, IconChevronRight, IconSearch,
 } from "../components/Icons";
 import PageHero from "../components/PageHero";
+import RequireAdmin from "../components/RequireAdmin";
 
 const STATUS_META = {
   open:         { cls: "badge-success", label: "Open" },
@@ -185,7 +186,7 @@ function DisputeCard({ dispute, expanded, onToggle, onResolved }) {
   );
 }
 
-export default function DisputesPage() {
+function DisputesContent() {
   const [disputes, setDisputes]       = useState([]);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState(null);
@@ -361,5 +362,13 @@ export default function DisputesPage() {
         )}
       </div>
     </>
+  );
+}
+
+export default function DisputesPage() {
+  return (
+    <RequireAdmin>
+      <DisputesContent />
+    </RequireAdmin>
   );
 }
