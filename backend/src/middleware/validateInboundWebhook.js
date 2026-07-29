@@ -18,7 +18,7 @@
  */
 
 const crypto = require('crypto');
-const WebhookDelivery = require('../models/webhookDeliveryModel');
+const InboundWebhookNonce = require('../models/inboundWebhookNonceModel');
 const logger = require('../utils/logger').child('WebhookReplayProtection');
 
 const TOLERANCE_SECONDS = parseInt(process.env.WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS, 10) || 300; // 5 min
@@ -72,9 +72,15 @@ function validateInboundWebhook(secretOrFn) {
       }
 
       // ── 3. Delivery-ID dedup ──────────────────────────────────────────────
+      // #1182 — Use InboundWebhookNonce (a minimal nonce store) rather than the
+      // outbound WebhookDelivery model.  WebhookDelivery has several required
+      // fields (endpointId, schoolId, event, success) that are not available in
+      // this inbound middleware, so calling WebhookDelivery.create({ deliveryId })
+      // threw a Mongoose validation error before MongoDB could produce a 11000
+      // duplicate-key error — meaning duplicate deliveries were never caught.
       if (deliveryId) {
         try {
-          await WebhookDelivery.create({ deliveryId });
+          await InboundWebhookNonce.create({ deliveryId });
         } catch (err) {
           if (err.code === 11000) {
             // Duplicate key — this delivery was already processed

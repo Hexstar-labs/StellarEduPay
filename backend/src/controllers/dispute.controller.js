@@ -178,9 +178,17 @@ async function flagDispute(req, res, next) {
       return res.status(400).json({ error: 'txHash, studentId, raisedBy, and reason are all required.', code: 'VALIDATION_ERROR' });
     }
 
-    // Validate field lengths
-    const raisedByTrimmed = raisedBy.trim();
-    const reasonTrimmed = reason.trim();
+    // #1181 — Trim before validating length and presence so whitespace-only
+    // strings ('   ') are rejected rather than silently accepted.
+    const raisedByTrimmed = typeof raisedBy === 'string' ? raisedBy.trim() : '';
+    const reasonTrimmed   = typeof reason   === 'string' ? reason.trim()   : '';
+
+    if (!raisedByTrimmed) {
+      return res.status(400).json({ error: 'raisedBy must not be blank.', code: 'VALIDATION_ERROR' });
+    }
+    if (!reasonTrimmed) {
+      return res.status(400).json({ error: 'reason must not be blank.', code: 'VALIDATION_ERROR' });
+    }
 
     if (raisedByTrimmed.length > 200) {
       return res.status(400).json({ error: 'raisedBy must not exceed 200 characters.', code: 'VALIDATION_ERROR' });
@@ -300,7 +308,11 @@ async function resolveDispute(req, res, next) {
       return res.status(400).json({ error: 'resolutionNote is required.', code: 'VALIDATION_ERROR' });
     }
 
-    const resolutionNoteTrimmed = resolutionNote.trim();
+    // #1181 — Trim before validating so whitespace-only strings are rejected.
+    const resolutionNoteTrimmed = typeof resolutionNote === 'string' ? resolutionNote.trim() : '';
+    if (!resolutionNoteTrimmed) {
+      return res.status(400).json({ error: 'resolutionNote must not be blank.', code: 'VALIDATION_ERROR' });
+    }
     if (resolutionNoteTrimmed.length > 1000) {
       return res.status(400).json({ error: 'resolutionNote must not exceed 1000 characters.', code: 'VALIDATION_ERROR' });
     }
