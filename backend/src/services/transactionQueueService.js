@@ -137,6 +137,13 @@ async function jobProcessor(job) {
       );
     }
     throw err;
+  } finally {
+    // Ping heartbeat after each job attempt (success or failure) so liveness
+    // checks can confirm the queue worker loop is still running.
+    try {
+      const { ping, WORKER_NAMES } = require('./workerHeartbeat');
+      ping(WORKER_NAMES.TX_QUEUE_WORKER);
+    } catch (_) { /* non-critical */ }
   }
 }
 
@@ -145,6 +152,11 @@ let worker = null;
 async function startWorker() {
   if (worker) return worker;
   worker = startTransactionWorker(jobProcessor);
+
+  try {
+    const { markStarted, WORKER_NAMES } = require('./workerHeartbeat');
+    markStarted(WORKER_NAMES.TX_QUEUE_WORKER);
+  } catch (_) { /* non-critical */ }
 
   // Re-enqueue any jobs that survived a restart in MongoDB
   try {
@@ -160,6 +172,10 @@ async function stopWorker() {
   if (worker) {
     await worker.close();
     worker = null;
+    try {
+      const { markStopped, WORKER_NAMES } = require('./workerHeartbeat');
+      markStopped(WORKER_NAMES.TX_QUEUE_WORKER);
+    } catch (_) { /* non-critical */ }
   }
 }
 

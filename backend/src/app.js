@@ -69,6 +69,19 @@ const { healthCheck, healthLive, healthReady } = require('./controllers/healthCo
 const { setupEnforceConsoleErrorLogging } = require('./errorHandling');
 const logger = require('./utils/logger');
 const { startHeapMonitoring } = require('./utils/heapMonitoring');
+const { validateMetricsTokenOnStartup } = require('./middleware/metricsAuth');
+
+// ── Startup security checks ───────────────────────────────────────────────────
+// Validate METRICS_BEARER_TOKEN before the server binds. In production, an
+// insecure or missing token causes a fatal exit so the /metrics endpoint is
+// never exposed without authentication.
+try {
+  validateMetricsTokenOnStartup();
+} catch (err) {
+  // eslint-disable-next-line no-console
+  console.error(`[FATAL] ${err.message}`);
+  process.exit(1);
+}
 
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');

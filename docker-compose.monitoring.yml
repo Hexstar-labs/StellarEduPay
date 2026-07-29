@@ -5,10 +5,15 @@ version: "3.8"
 # Usage:
 #   1. Set METRICS_TOKEN in backend/.env (generate with: openssl rand -hex 32)
 #   2. Copy that token into monitoring/prometheus.yml under authorization.credentials
-#   3. docker compose -f docker-compose.monitoring.yml up -d
+#   3. Set GRAFANA_PASSWORD to a strong password (required — no default):
+#        export GRAFANA_PASSWORD=$(openssl rand -hex 24)
+#   4. docker compose -f docker-compose.monitoring.yml up -d
 #
 # Prometheus: http://localhost:9090
-# Grafana:    http://localhost:3001  (admin / admin — change on first login)
+# Grafana:    http://localhost:3001  (admin / <GRAFANA_PASSWORD>)
+#
+# NOTE: GRAFANA_PASSWORD is a required environment variable. Docker Compose will
+# refuse to start the monitoring stack if it is not set.
 
 services:
   prometheus:
@@ -35,7 +40,7 @@ services:
   grafana:
     image: grafana/grafana:10.4.3
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?Error: GRAFANA_PASSWORD environment variable must be set. Generate one with: openssl rand -hex 24}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_SERVER_ROOT_URL: "http://localhost:3001"
     volumes:

@@ -218,3 +218,28 @@ docker-compose down
 - Monitor health check failures in production
 - Set up alerts for unhealthy services
 - Consider using orchestration tools (Kubernetes, Docker Swarm) for advanced health management
+
+## Monitoring Stack Prerequisites
+
+Before launching the monitoring stack (`docker-compose.monitoring.yml`), the
+following environment variables **must** be set:
+
+| Variable | Description | How to generate |
+|----------|-------------|-----------------|
+| `GRAFANA_PASSWORD` | **Required.** Grafana admin password. No default — Docker Compose will refuse to start if unset. | `openssl rand -hex 24` |
+| `METRICS_TOKEN` | **Required.** Bearer token for the `/metrics` endpoint. | `openssl rand -hex 32` |
+
+```sh
+# Set required variables before starting the monitoring stack
+export GRAFANA_PASSWORD=$(openssl rand -hex 24)
+export METRICS_TOKEN=$(openssl rand -hex 32)
+
+# Copy METRICS_TOKEN into monitoring/prometheus.yml (authorization.credentials)
+# then start the stack:
+docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+```
+
+If `GRAFANA_PASSWORD` is not set, Docker Compose will exit immediately with:
+```
+GRAFANA_PASSWORD: Error: GRAFANA_PASSWORD environment variable must be set.
+```

@@ -695,6 +695,15 @@ async function pollAllSchools() {
     logger.error('Error in polling cycle', { error: error.message, nextIntervalMs: currentIntervalMs });
   }
 
+  // Record heartbeat after every cycle (success or error) so the health check
+  // can confirm the polling loop is still alive.
+  try {
+    const { ping, WORKER_NAMES } = require('./workerHeartbeat');
+    ping(WORKER_NAMES.POLLING_SYNC);
+  } catch (_) {
+    // Non-critical — do not interrupt polling if heartbeat module is unavailable.
+  }
+
   scheduleNextPoll();
 }
 
@@ -727,6 +736,11 @@ function startPolling() {
   currentIntervalMs = SYNC_INTERVAL_MS;
   logger.info('Starting transaction polling service', { intervalMs: SYNC_INTERVAL_MS });
 
+  try {
+    const { markStarted, WORKER_NAMES } = require('./workerHeartbeat');
+    markStarted(WORKER_NAMES.POLLING_SYNC);
+  } catch (_) { /* non-critical */ }
+
   // Run immediately on startup, then self-schedule via setTimeout for backoff support
   pollAllSchools();
 }
@@ -742,6 +756,10 @@ function stopPolling() {
     clearTimeout(pollingInterval);
     pollingInterval = null;
   }
+  try {
+    const { markStopped, WORKER_NAMES } = require('./workerHeartbeat');
+    markStopped(WORKER_NAMES.POLLING_SYNC);
+  } catch (_) { /* non-critical */ }
   logger.info('Transaction polling service stopped');
 }
 
