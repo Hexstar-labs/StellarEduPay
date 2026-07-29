@@ -2,6 +2,7 @@
 
 const express = require("express");
 const router = express.Router();
+const { requireSchoolAuth } = require('../middleware/auth');
 
 const {
   getPaymentInstructions,
