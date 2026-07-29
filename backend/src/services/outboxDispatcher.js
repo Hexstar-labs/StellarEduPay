@@ -38,7 +38,17 @@ async function dispatchOutboxEvents() {
           continue;
         }
 
-        paymentEvents.emit(event.eventType, event.payload);
+        const results = await paymentEvents.asyncEmit(event.eventType, event.payload);
+
+        // If any listener failed (rejected), treat the whole dispatch as
+        // failed so the event gets retried or dead-lettered rather than
+        // being permanently marked processed with unprocessed side-effects.
+        const rejected = results.filter((r) => r.status === 'rejected');
+        if (rejected.length > 0) {
+          const messages = rejected.map((r) => r.reason?.message || String(r.reason));
+          throw new Error(`Listener(s) rejected: ${messages.join('; ')}`);
+        }
+
         await Outbox.findByIdAndUpdate(event._id, {
           processed: true,
           processedAt: new Date(),
