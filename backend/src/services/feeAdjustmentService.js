@@ -47,6 +47,49 @@ class FeeAdjustmentService {
   }
 
   /**
+   * Fetch active rules sorted by priority ASC, name ASC.
+   * Exposed for batch/bulk processing callers to avoid N+1 queries.
+   *
+   * @param {string} schoolId
+   * @returns {Promise<Array>}
+   */
+  async fetchSortedRules(schoolId) {
+    return this._fetchSortedRules(schoolId);
+  }
+
+  /**
+   * Calculate final fee given a pre-fetched set of rules (synchronous).
+   *
+   * @param {Object} feeStructure
+   * @param {Object} paymentContext
+   * @param {Array} rules
+   * @returns {Object}
+   */
+  calculateAdjustedFeeWithRules(feeStructure, paymentContext, rules) {
+    return this._applyRules(feeStructure, paymentContext, rules);
+  }
+
+  /**
+   * Simulate extra rule with pre-fetched existing rules (synchronous).
+   *
+   * @param {Object} feeStructure
+   * @param {Object} paymentContext
+   * @param {Object} extraRule
+   * @param {Array} existingRules
+   * @returns {Object}
+   */
+  simulateWithExtraWithRules(feeStructure, paymentContext, extraRule, existingRules) {
+    const combined = [...existingRules, extraRule].sort(
+      (a, b) => (a.priority - b.priority) || (a.name || '').localeCompare(b.name || '')
+    );
+    const result = this._applyRules(feeStructure, paymentContext, combined);
+    result.ruleApplied = result.adjustmentsApplied.some(
+      a => a.ruleName === (extraRule.name || '_dry_run_preview_')
+    );
+    return result;
+  }
+
+  /**
    * Simulate the effect of an *extra* (unsaved) rule injected into the existing
    * rule set.  Used by the dry-run endpoint.
    *
@@ -57,16 +100,7 @@ class FeeAdjustmentService {
    */
   async simulateWithExtra(feeStructure, paymentContext, extraRule) {
     const existing = await this._fetchSortedRules(paymentContext.schoolId);
-    // Insert the extra rule into the sorted list at its declared priority
-    const combined = [...existing, extraRule].sort(
-      (a, b) => (a.priority - b.priority) || (a.name || '').localeCompare(b.name || '')
-    );
-    const result = this._applyRules(feeStructure, paymentContext, combined);
-    // Flag whether the synthetic rule actually matched
-    result.ruleApplied = result.adjustmentsApplied.some(
-      a => a.ruleName === (extraRule.name || '_dry_run_preview_')
-    );
-    return result;
+    return this.simulateWithExtraWithRules(feeStructure, paymentContext, extraRule, existing);
   }
 
   // ── Internal ────────────────────────────────────────────────────────────────
