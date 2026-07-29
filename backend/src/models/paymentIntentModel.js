@@ -9,7 +9,7 @@ const paymentIntentSchema = new mongoose.Schema(
     studentId: { type: String, required: true },
     amount: { type: Number, required: true },
     feeCategory: { type: String, default: null },
-    memo: { type: String, required: true, unique: true },
+    memo: { type: String, required: true },
     status: {
       type: String,
       enum: ["pending", "completed", "expired"],
@@ -24,6 +24,9 @@ paymentIntentSchema.index({ schoolId: 1, studentId: 1 });
 paymentIntentSchema.index({ schoolId: 1, status: 1 });
 // Lookup intent by memo during payment sync
 paymentIntentSchema.index({ schoolId: 1, memo: 1, status: 1 });
+// Memos are only required to be unique within a school, not globally — two
+// schools can legitimately produce the same memo (#1202).
+paymentIntentSchema.index({ schoolId: 1, memo: 1 }, { unique: true });
 // Cleanup / TTL queries on expired intents
 paymentIntentSchema.index({ status: 1, expiresAt: 1 });
 // Compound index for active intent lookup: { studentId, schoolId, expiresAt }
