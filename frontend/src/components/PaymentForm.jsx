@@ -56,7 +56,8 @@ export default function PaymentForm() {
   const [loading, setLoading]                 = useState(false);
   const [copied, setCopied]                   = useState(null);
   const [hasDeletedPayments, setHasDeletedPayments] = useState(false);
-  const [disputingTx, setDisputingTx]         = useState(null);
+  const [balanceError, setBalanceError]         = useState(false);
+  const [disputingTx, setDisputingTx]           = useState(null);
   const [disputedTxs, setDisputedTxs]         = useState(new Set());
   // #1118 — wallets that cannot send free-text memos can switch the QR code to
   // MEMO_ID or MEMO_HASH; all three decode back to the same payment reference.
@@ -95,6 +96,7 @@ export default function PaymentForm() {
     setInstructions(null);
     setPayments(null);
     setHasDeletedPayments(false);
+    setBalanceError(false);
     setLoading(true);
     setPaymentsLoading(true);
     try {
@@ -104,8 +106,9 @@ export default function PaymentForm() {
         getPaymentInstructions(id, { signal }),
         getStudentPayments(id, { signal }),
         getStudentBalance(id, { signal }).catch((err) => {
-          // Propagate abort so the outer catch can detect it; swallow other errors.
+          // Propagate abort so the outer catch can detect it; surface other errors.
           if (err?.name === "CanceledError" || err?.code === "ERR_CANCELED") throw err;
+          setBalanceError(true);
           return null;
         }),
       ]);
@@ -132,6 +135,17 @@ export default function PaymentForm() {
       }
     }
   }, []);
+
+  const retryBalance = useCallback(async () => {
+    if (!studentId.trim()) return;
+    setBalanceError(false);
+    try {
+      const balRes = await getStudentBalance(studentId);
+      setHasDeletedPayments(balRes?.data?.hasDeletedPayments === true);
+    } catch {
+      setBalanceError(true);
+    }
+  }, [studentId]);
 
   async function copy(text, key) {
     await navigator.clipboard.writeText(text).catch(() => {});
@@ -231,6 +245,22 @@ export default function PaymentForm() {
                 <div role="alert" className="alert alert-warning" style={{ marginBottom: "1rem", fontSize: "0.8125rem" }}>
                   <IconAlertTriangle size={14} />
                   This student has deleted payment records not included in the balance shown.
+                </div>
+              )}
+              {balanceError && (
+                <div role="alert" className="alert alert-warning" style={{ marginBottom: "1rem", fontSize: "0.8125rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                    <IconAlertTriangle size={14} />
+                    Balance information could not be loaded.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={retryBalance}
+                    className="btn btn-sm btn-ghost"
+                    style={{ flexShrink: 0 }}
+                  >
+                    Retry
+                  </button>
                 </div>
               )}
 
