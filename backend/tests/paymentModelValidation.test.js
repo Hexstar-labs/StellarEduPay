@@ -20,10 +20,6 @@ jest.mock('mongoose', () => {
 
 // ── Service/util stubs the model imports ────────────────────────────────────
 jest.mock('../src/utils/softDelete', () => (schema) => schema);
-jest.mock('../src/utils/memoEncryption', () => ({
-  encryptMemo: (v) => v,
-  decryptMemo: (v) => v,
-}));
 jest.mock('../src/plugins/tenantScope', () =>
   // tenantScope is used as: paymentSchema.plugin(tenantScope, { modelName: 'Payment' })
   // Mongoose schema.plugin() requires its first argument to be a function.

@@ -1,6 +1,6 @@
 'use strict';
 
-const SENSITIVE_KEYS = new Set(['JWT_SECRET', 'MEMO_ENCRYPTION_KEY', 'WEBHOOK_SECRET', 'MONGO_URI', 'MONGODB_URI', 'SMTP_PASS', 'REDIS_PASSWORD']);
+const SENSITIVE_KEYS = new Set(['JWT_SECRET', 'WEBHOOK_SECRET', 'MONGO_URI', 'MONGODB_URI', 'SMTP_PASS', 'REDIS_PASSWORD']);
 
 function redactConfig(cfg) {
   if (!cfg || typeof cfg !== 'object') return cfg;
