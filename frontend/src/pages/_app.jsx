@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { useRouter } from "next/router";
+import Head from "next/head";
 import "../styles/globals.css";
 import "../styles/redesign.css";
 import Navbar from "../components/Navbar";
@@ -47,6 +48,9 @@ export default function MyApp({ Component, pageProps }) {
 
   return (
     <ThemeContext.Provider value={{ dark, toggle: () => setDark((d) => !d) }}>
+      <Head>
+        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+      </Head>
       <Navbar />
       <ErrorBoundary>
         {useAppLayout ? (

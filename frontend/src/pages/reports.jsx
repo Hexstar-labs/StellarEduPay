@@ -6,7 +6,6 @@ export default function ReportsPage() {
     <>
       <Head>
         <title>Reports | StellarEduPay</title>
-        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
       </Head>
       <ReportDownload />
     </>
