@@ -52,7 +52,7 @@ api.interceptors.response.use((response) => response, onResponseRejected);
 // coupling to a specific named helper.
 export default api;
 
-export const getStudents = (page = 1, limit = 20, { search, status, className } = {}) =>
+export const getStudents = (page = 1, limit = 20, { search, status, className } = {}, { signal } = {}) =>
   api.get("/students", {
     params: {
       page,
@@ -61,14 +61,15 @@ export const getStudents = (page = 1, limit = 20, { search, status, className } 
       ...(status    && status !== "all" && { status }),
       ...(className && { class: className }),
     },
+    signal,
   });
-export const getStudent = (studentId) => api.get(`/students/${studentId}`);
+export const getStudent = (studentId, { signal } = {}) => api.get(`/students/${studentId}`, { signal });
 export const registerStudent = (data) => api.post("/students", data);
 export const updateStudent = (studentId, data) => api.patch(`/students/${studentId}`, data);
 export const getPaymentSummary = () => api.get("/payments/summary");
-export const getPaymentInstructions = (studentId) => api.get(`/payments/instructions/${studentId}`);
-export const getStudentPayments = (studentId) => api.get(`/payments/${studentId}`);
-export const getStudentBalance  = (studentId) => api.get(`/payments/balance/${studentId}`);
+export const getPaymentInstructions = (studentId, { signal } = {}) => api.get(`/payments/instructions/${studentId}`, { signal });
+export const getStudentPayments = (studentId, { signal } = {}) => api.get(`/payments/${studentId}`, { signal });
+export const getStudentBalance  = (studentId, { signal } = {}) => api.get(`/payments/balance/${studentId}`, { signal });
 export const verifyPayment = (txHash) => api.post("/payments/verify", { txHash });
 export const syncPayments = () => api.post("/payments/sync");
 export const getSyncStatus = () => api.get("/payments/sync/status");
