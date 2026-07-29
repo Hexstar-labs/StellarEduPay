@@ -20,7 +20,12 @@ async function reconcileAll(schoolId) {
         { $match: { schoolId: s.schoolId, studentId: s.studentId, status: 'SUCCESS', deletedAt: null } },
         { $group: { _id: null, computedTotal: { $sum: '$amount' } } },
       ]);
-      const computed = agg?.computedTotal ?? 0;
+      // creditAdjustments are intentional admin-applied manual credits.
+      // Including them here ensures the 24-hour reconciliation cycle never
+      // treats a partial-credit adjustment as drift and reverts it.
+      const paymentTotal = agg?.computedTotal ?? 0;
+      const creditAdjustments = s.creditAdjustments || 0;
+      const computed = parseFloat((paymentTotal + creditAdjustments).toFixed(7));
       if (Math.abs(computed - (s.totalPaid || 0)) > 0.0000001) {
         logger.warn('Reconciliation mismatch — correcting', { schoolId: s.schoolId, studentId: s.studentId, diff: computed - (s.totalPaid || 0) });
         await Student.findOneAndUpdate(
