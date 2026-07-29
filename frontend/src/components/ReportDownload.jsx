@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getReport } from "../services/api";
+import { getReport, getReportCsvUrl } from "../services/api";
 import { getErrorMessage } from "../utils/errorMessages";
 import {
   IconCalendar, IconDownload, IconBarChart, IconAlertTriangle,
@@ -39,8 +39,7 @@ export default function ReportDownload() {
     if (endDate)   params.endDate   = endDate;
 
     try {
-      const query = new URLSearchParams({ ...params, format: "csv" }).toString();
-      const url = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"}/reports?${query}`;
+      const url = getReportCsvUrl(params);
       const response = await fetch(url, {
         credentials: "include",
       });
