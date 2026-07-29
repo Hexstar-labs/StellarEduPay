@@ -19,10 +19,6 @@ jest.mock('../src/utils/logger', () => ({
   warn: jest.fn(),
   error: jest.fn(),
 }));
-jest.mock('../src/utils/memoEncryption', () => ({
-  encryptMemo: (v) => v,
-  decryptMemo: (v) => v,
-}));
 jest.mock('../src/plugins/tenantScope', () => () => {});
 jest.mock('../src/services/paymentConfirmationStateMachine', () => ({
   CONFIRMATION_STATES: {

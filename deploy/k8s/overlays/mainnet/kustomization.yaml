@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Production / mainnet overlay.
+# Apply with: kubectl apply -k deploy/k8s/overlays/mainnet
+#
+# This overlay sets STELLAR_NETWORK=mainnet, enabling real irreversible
+# transactions. Ensure all secrets are provisioned (see
+# docs/operator-runbooks.md § Secret Provisioning) and that you are
+# targeting the correct cluster context before applying.
+
+resources:
+  - ../../
+
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: backend
+      spec:
+        template:
+          spec:
+            containers:
+              - name: backend
+                env:
+                  - name: STELLAR_NETWORK
+                    value: "mainnet"
+    target:
+      kind: Deployment
+      name: backend

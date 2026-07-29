@@ -11,14 +11,13 @@ const STEPS = [
 ];
 
 export default function PayFees() {
-  // Surface a visible degraded-mode banner when cross-replica SSE delivery is
-  // unavailable, so parents know real-time confirmation may be delayed (Issue #1054).
-  const { degraded } = usePaymentEvents();
+  // Surface degraded/reconnecting/failed banner (Issues #1054, #1078).
+  const { degraded, connectionStatus } = usePaymentEvents();
 
   return (
     <>
       <Head><title>Pay Fees | StellarEduPay</title></Head>
-      <SseDegradedBanner degraded={degraded} />
+      <SseDegradedBanner degraded={degraded} connectionStatus={connectionStatus} />
 
       <div className="payfees-page">
         {/* Page header */}

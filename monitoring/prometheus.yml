@@ -13,6 +13,7 @@ rule_files:
   - "alerts/mongodb.yml"
   - "alerts/horizon_failover.yml"
   - "alerts/queue_backpressure.yml"
+  - "alerts/backup.yml"
 
 scrape_configs:
   - job_name: stellaredupay

@@ -1,0 +1,67 @@
+groups:
+  - name: backup
+    interval: 60s
+    rules:
+      # ── Warning: no successful backup in the expected 24-hour window ──────
+      # backup_last_success_timestamp_seconds is set by backup.sh via
+      # POST /api/internal/backup-heartbeat on each successful run. A value
+      # of 0 means "no successful backup has been recorded since the process
+      # started" — the BackupNotRun rule catches that separately.
+      # The 26-hour threshold (24 h schedule + 2 h grace) fires before the
+      # window reaches 48 h (two missed backups). See issue #1102.
+      - alert: BackupStale
+        expr: >
+          backup_last_success_timestamp_seconds > 0
+          and (time() - backup_last_success_timestamp_seconds) > 93600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No successful backup in the last 26 hours"
+          description: >
+            The last recorded successful backup was
+            {{ $value | humanizeDuration }} ago (threshold: 26 h).
+            The backup container may have failed silently. Check
+            `docker logs <backup-container>` and verify that
+            BACKUP_NOTIFY_TOKEN is set correctly in both the backup
+            and backend containers.
+          runbook_url: "https://github.com/manuelusman73-png/StellarEduPay/blob/main/docs/runbooks/backup-staleness.md"
+
+      # ── Critical: backup is more than 2 days stale ───────────────────────
+      - alert: BackupCriticallyStale
+        expr: >
+          backup_last_success_timestamp_seconds > 0
+          and (time() - backup_last_success_timestamp_seconds) > 172800
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No successful backup in the last 48 hours — immediate action required"
+          description: >
+            The last recorded successful backup was
+            {{ $value | humanizeDuration }} ago (threshold: 48 h).
+            Financial and student data is at risk. Investigate and
+            restore the backup schedule immediately.
+          runbook_url: "https://github.com/manuelusman73-png/StellarEduPay/blob/main/docs/runbooks/backup-staleness.md"
+
+      # ── Warning: backup metric exists but has never been updated ─────────
+      # Catches the case where BACKUP_NOTIFY_TOKEN is misconfigured or the
+      # backend just restarted — the gauge is 0 until the first successful
+      # backup heartbeat arrives. This fires 26 hours after process start so
+      # operators notice misconfiguration before the first real backup window
+      # elapses.
+      - alert: BackupNotRun
+        expr: backup_last_success_timestamp_seconds == 0
+        for: 26h
+        labels:
+          severity: warning
+        annotations:
+          summary: "No backup heartbeat received since process start"
+          description: >
+            backup_last_success_timestamp_seconds is 0, meaning the
+            backend has never received a successful backup heartbeat
+            since it last started. Verify that BACKUP_NOTIFY_TOKEN is
+            set in both the backup and backend containers and that the
+            backup container can reach the backend on
+            BACKEND_INTERNAL_URL.
+          runbook_url: "https://github.com/manuelusman73-png/StellarEduPay/blob/main/docs/runbooks/backup-staleness.md"

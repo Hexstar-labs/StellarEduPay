@@ -563,7 +563,6 @@ As a blockchain-based payment system, security is paramount:
 
 ### Data Privacy
 - Never log sensitive information (passwords, secret keys, PII)
-- Use memo encryption when handling student IDs (see `MEMO_ENCRYPTION_KEY`)
 - Follow GDPR principles for data handling
 
 ---

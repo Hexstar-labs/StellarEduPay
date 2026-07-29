@@ -60,10 +60,6 @@ describe('#666 — redactConfig()', () => {
     expect(redactConfig({ MONGO_URI: 'mongodb://user:pass@host/db' }).MONGO_URI).toBe('[REDACTED]');
   });
 
-  test('redacts MEMO_ENCRYPTION_KEY', () => {
-    expect(redactConfig({ MEMO_ENCRYPTION_KEY: 'abc123' }).MEMO_ENCRYPTION_KEY).toBe('[REDACTED]');
-  });
-
   test('redacts WEBHOOK_SECRET', () => {
     expect(redactConfig({ WEBHOOK_SECRET: 'wh-secret' }).WEBHOOK_SECRET).toBe('[REDACTED]');
   });
@@ -95,7 +91,7 @@ describe('#666 — redactConfig()', () => {
   });
 
   test('SENSITIVE_KEYS contains all required keys', () => {
-    for (const key of ['JWT_SECRET', 'MEMO_ENCRYPTION_KEY', 'WEBHOOK_SECRET', 'MONGO_URI', 'SMTP_PASS']) {
+    for (const key of ['JWT_SECRET', 'WEBHOOK_SECRET', 'MONGO_URI', 'SMTP_PASS']) {
       expect(SENSITIVE_KEYS.has(key)).toBe(true);
     }
   });

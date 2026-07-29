@@ -12,9 +12,14 @@ export const useTheme = () => useContext(ThemeContext);
 const APP_LAYOUT_ROUTES = [
   "/dashboard",
   "/reports",
+  "/fees",
   "/fee-adjustments",
   "/audit-logs",
   "/disputes",
+  "/audit-logs",
+  "/fee-adjustments",
+  "/fees",
+  "/reports",
 ];
 
 export default function MyApp({ Component, pageProps }) {
