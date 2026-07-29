@@ -42,9 +42,12 @@ healthcheck:
 - Retries up to 5 times before marking as unhealthy
 - Waits 30 seconds before starting checks (allows Node.js app to start and connect to MongoDB)
 
-The `/health` endpoint returns:
-- `200 OK` when both database and Stellar are healthy
-- `503 Service Unavailable` when either check fails
+The `/health` endpoint returns a three-tier status, not a simple pass/fail:
+- `200 OK` with `status: "healthy"` — database, Stellar, and other subsystems are all fine
+- `200 OK` with `status: "degraded"` — MongoDB is up, but a non-critical subsystem (e.g. Stellar Horizon unreachable, Redis not ready, retry queue failed) is impaired; the app keeps serving traffic
+- `503 Service Unavailable` with `status: "unhealthy"` — MongoDB is disconnected
+
+A Horizon or Redis blip alone will never cause a 503 — only a MongoDB outage does.
 
 ### Service Dependencies
 
@@ -123,8 +126,27 @@ curl http://localhost:5000/health
       "latency_ms": 5
     },
     "stellar": {
-      "status": "healthy",
+      "status": "ok",
       "latency_ms": 150,
+      "network": "testnet",
+      "horizonUrl": "https://horizon-testnet.stellar.org"
+    }
+  }
+}
+
+# Example response when degraded (e.g. Horizon unreachable, MongoDB still up):
+# HTTP 200, not 503 — the app keeps serving traffic
+{
+  "status": "degraded",
+  "timestamp": "2024-03-30T10:00:00.000Z",
+  "checks": {
+    "database": {
+      "status": "healthy",
+      "latency_ms": 5
+    },
+    "stellar": {
+      "status": "unreachable",
+      "error": "Horizon did not respond within 3000ms",
       "network": "testnet",
       "horizonUrl": "https://horizon-testnet.stellar.org"
     }
