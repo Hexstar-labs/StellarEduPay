@@ -113,7 +113,7 @@ async function updateFeeStructure(req, res, next) {
 
             // Aggregate confirmed payment totals per student from authoritative source
             const paymentTotals = await Payment.aggregate([
-              { $match: { schoolId: req.schoolId, studentId: { $in: studentIds }, status: 'SUCCESS' } },
+              { $match: Payment.activeFilter({ schoolId: req.schoolId, studentId: { $in: studentIds }, status: 'SUCCESS' }) },
               { $group: { _id: '$studentId', amountPaid: { $sum: '$amount' } } },
             ]).session(session);
 

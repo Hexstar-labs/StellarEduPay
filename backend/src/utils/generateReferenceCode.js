@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const Payment = require('../models/paymentModel');
 
 /**
@@ -7,7 +8,7 @@ const Payment = require('../models/paymentModel');
 async function generateReferenceCode(maxAttempts = 5) {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   for (let i = 0; i < maxAttempts; i++) {
-    const suffix = Array.from({ length: 10 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+    const suffix = Array.from({ length: 10 }, () => chars[crypto.randomInt(0, chars.length)]).join('');
     const code = `PAY-${suffix}`;
     const exists = await Payment.exists({ referenceCode: code });
     if (!exists) return code;
