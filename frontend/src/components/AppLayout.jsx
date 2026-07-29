@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
-import { useAdminAuth } from "../hooks/useAdminAuth";
+import { useAdminAuthContext } from "../hooks/AdminAuthContext";
 import RequireAdmin from "./RequireAdmin";
 import {
   IconDashboard,
@@ -29,7 +29,7 @@ const ADMIN_NAV = [
 
 function AppLayoutInner({ children }) {
   const { pathname } = useRouter();
-  const { isAdmin } = useAdminAuth();
+  const { isAdmin } = useAdminAuthContext();
 
   return (
     <div className="app-layout">

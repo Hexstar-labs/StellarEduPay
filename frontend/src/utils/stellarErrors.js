@@ -1,40 +1,27 @@
-// Maps Stellar / Horizon error codes to user-facing messages.
-// The backend may surface Stellar SDK codes (lowercase, e.g. "tx_insufficient_fee")
-// or custom backend codes (uppercase, e.g. "HORIZON_UNREACHABLE").
+// Parses Stellar / Horizon errors from Axios error objects and maps them to
+// user-facing messages.  All message text is owned by errorMessages.js — this
+// module handles the *detection* logic (code lookup, keyword fallback) only,
+// so every form displays identical wording for the same underlying failure.
+// See #1216.
+
+import { getErrorMessage } from "./errorMessages";
 
 const STELLAR_STATUS_URL = "https://status.stellar.org";
 
-const CODE_MAP = {
-  // Stellar SDK result codes (Horizon envelope errors)
-  tx_insufficient_fee: {
-    message:
-      "The Stellar network is congested and rejected the transaction fee. Please try again in a few minutes or use a higher transaction fee.",
-    showStatus: true,
-  },
-  op_underfunded: {
-    message:
-      "Insufficient XLM balance. Please fund your wallet with enough XLM to cover the payment and transaction fee.",
-    showStatus: false,
-  },
-  // Backend-defined codes
-  HORIZON_UNREACHABLE: {
-    message:
-      "The Stellar network is temporarily unavailable. Please check the network status and try again later.",
-    showStatus: true,
-  },
-  HORIZON_UNAVAILABLE: {
-    message:
-      "The Stellar network is temporarily unavailable. Please check the network status and try again later.",
-    showStatus: true,
-  },
-  STELLAR_NETWORK_ERROR: {
-    message:
-      "A Stellar network error occurred. Please try again in a few minutes.",
-    showStatus: true,
-  },
+// Maps an error code (either a Stellar SDK result code like "tx_insufficient_fee"
+// or a backend-defined code like "HORIZON_UNREACHABLE") to whether we should
+// surface the Stellar status-page URL alongside the message.
+const CODE_SHOW_STATUS = {
+  tx_insufficient_fee: true,
+  op_underfunded:      false,
+  HORIZON_UNREACHABLE: true,
+  HORIZON_UNAVAILABLE: true,
+  STELLAR_NETWORK_ERROR: true,
 };
 
-// Fallback: search the error message string for known keywords when the code field is absent.
+// Fallback: search the error message string for known keywords when the code
+// field is absent.  Each entry maps a keyword to a canonical code whose
+// message lives in errorMessages.js.
 const KEYWORD_MAP = [
   { keyword: "tx_insufficient_fee", ref: "tx_insufficient_fee" },
   { keyword: "op_underfunded",      ref: "op_underfunded" },
@@ -45,28 +32,33 @@ const KEYWORD_MAP = [
 
 /**
  * Attempts to extract a Stellar-specific error from an Axios error.
- * Returns { message, stellarStatusUrl } if the error is Stellar-related,
- * or null if the caller should fall back to a generic message.
+ *
+ * Returns `{ message, stellarStatusUrl }` when the error is Stellar-related,
+ * or `null` when the caller should fall back to a generic message via
+ * `getErrorMessage()` from errorMessages.js.
+ *
+ * @param {Error} err - An Axios error (or any error with a `.response` shape).
+ * @returns {{ message: string, stellarStatusUrl: string|null } | null}
  */
 export function parseStellarError(err) {
-  const code    = err?.response?.data?.code    || "";
-  const message = err?.response?.data?.error   || err?.message || "";
+  const code    = err?.response?.data?.code  || "";
+  const message = err?.response?.data?.error || err?.message || "";
 
-  const entry = CODE_MAP[code];
-  if (entry) {
+  // Direct code match
+  if (code && Object.prototype.hasOwnProperty.call(CODE_SHOW_STATUS, code)) {
     return {
-      message: entry.message,
-      stellarStatusUrl: entry.showStatus ? STELLAR_STATUS_URL : null,
+      message:         getErrorMessage(code),
+      stellarStatusUrl: CODE_SHOW_STATUS[code] ? STELLAR_STATUS_URL : null,
     };
   }
 
+  // Keyword fallback when the response has no structured code
   const lower = message.toLowerCase();
   for (const { keyword, ref } of KEYWORD_MAP) {
     if (lower.includes(keyword)) {
-      const fallback = CODE_MAP[ref];
       return {
-        message: fallback.message,
-        stellarStatusUrl: fallback.showStatus ? STELLAR_STATUS_URL : null,
+        message:         getErrorMessage(ref),
+        stellarStatusUrl: CODE_SHOW_STATUS[ref] ? STELLAR_STATUS_URL : null,
       };
     }
   }

@@ -25,7 +25,6 @@ const ERROR_MESSAGES = {
   AMOUNT_TOO_LOW:              "Payment amount is below the minimum allowed.",
   AMOUNT_TOO_HIGH:             "Payment amount exceeds the maximum allowed.",
   UNDERPAID:                   "Payment amount is less than the required fee.",
-  STELLAR_NETWORK_ERROR:       "The Stellar network is currently unavailable. Please try again later.",
   PAYMENT_LOCKED:              "This payment is currently being processed. Please wait.",
   INTENT_EXPIRED:              "The payment session has expired. Please start again.",
   INVALID_FEE_CATEGORY:        "Invalid fee category specified.",
@@ -70,6 +69,17 @@ const ERROR_MESSAGES = {
   CSV_INVALID_FORMAT:          "The CSV file format is not valid.",
   CSV_TOO_MANY_ROWS:           "The CSV file contains too many rows.",
   CSV_TOO_LARGE:               "The CSV file is too large to process.",
+
+  // Stellar / Horizon errors
+  // These codes are surfaced by the backend or by parseStellarError() in
+  // stellarErrors.js — all user-facing text for Stellar failures lives here so
+  // every component shows identical wording for the same underlying failure.
+  STELLAR_NETWORK_ERROR:       "The Stellar network is currently unavailable. Please try again later.",
+  HORIZON_UNREACHABLE:         "The Stellar network is temporarily unavailable. Please check the network status and try again later.",
+  HORIZON_UNAVAILABLE:         "The Stellar network is temporarily unavailable. Please check the network status and try again later.",
+  // Horizon result codes (lowercase, as returned by the Stellar SDK)
+  tx_insufficient_fee:         "The Stellar network is congested and rejected the transaction fee. Please try again in a few minutes or use a higher transaction fee.",
+  op_underfunded:              "Insufficient XLM balance. Please fund your wallet with enough XLM to cover the payment and transaction fee.",
 
   // Rate limiting / system errors
   RATE_LIMIT_EXCEEDED:         "Too many requests. Please slow down and try again.",

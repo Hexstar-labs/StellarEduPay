@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useRouter } from "next/router";
-import { useAdminAuth } from "../hooks/useAdminAuth";
+import { useAdminAuthContext } from "../hooks/AdminAuthContext";
 
 /**
  * RequireAdmin
@@ -29,7 +29,7 @@ import { useAdminAuth } from "../hooks/useAdminAuth";
  */
 export default function RequireAdmin({ children }) {
   const router = useRouter();
-  const { isAdmin, checked } = useAdminAuth();
+  const { isAdmin, checked } = useAdminAuthContext();
 
   useEffect(() => {
     // Only act once the /auth/me round-trip has completed.

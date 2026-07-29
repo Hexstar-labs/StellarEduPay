@@ -9,7 +9,7 @@ import { getErrorMessage } from "../utils/errorMessages";
 import { validateStellarAmount } from "../utils/stellarAmount";
 import { IconAlertTriangle, IconCheck } from "../components/Icons";
 import PageHero from "../components/PageHero";
-import { useAdminAuth } from "../hooks/useAdminAuth";
+import { useAdminAuthContext } from "../hooks/AdminAuthContext";
 
 const RULE_TYPES = [
   { value: "discount_percentage", label: "Discount %" },
@@ -51,7 +51,7 @@ function RuleTypePill({ type }) {
 }
 
 export default function FeeAdjustments() {
-  const { schoolId } = useAdminAuth();
+  const { schoolId } = useAdminAuthContext();
   const [rules, setRules]           = useState([]);
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState(null);
