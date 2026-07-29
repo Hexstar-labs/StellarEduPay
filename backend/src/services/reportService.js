@@ -292,7 +292,7 @@ async function getDashboardMetrics({ schoolId, timezone = 'UTC' } = {}) {
 
     // Per-class breakdown (from Student collection — these are small)
     Student.aggregate([
-      { $match: { schoolId } },
+      { $match: Student.activeFilter({ schoolId }) },
       {
         $group: {
           _id: '$class',
@@ -325,7 +325,7 @@ async function getDashboardMetrics({ schoolId, timezone = 'UTC' } = {}) {
       .lean(),
 
     Student.aggregate([
-      { $match: { schoolId } },
+      { $match: Student.activeFilter({ schoolId }) },
       { $group: { _id: null, totalExpected: { $sum: '$feeAmount' }, totalPaid: { $sum: '$totalPaid' } } },
     ]),
   ]);
