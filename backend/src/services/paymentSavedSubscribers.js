@@ -23,7 +23,7 @@ const logger = require('../utils/logger').child('PaymentSavedSubscribers');
 
 async function onPaymentSavedWebhook(payment) {
   try {
-    const school = await School.findOne({ schoolId: payment.schoolId }).lean();
+    const school = await School.findOne({ schoolId: payment.schoolId });
     const allowedFields = school?.webhookPayloadConfig?.allowedFields || null;
     const { buildWebhookPayload } = require('../utils/buildWebhookPayload');
     const { fireWebhookToEndpoints } = require('./webhookService');
@@ -108,7 +108,7 @@ async function onPaymentSavedCancelReminder(payment) {
 async function onRefundStatusChanged(refundEvent) {
   try {
     if (refundEvent.newStatus === 'confirmed') {
-      const school = await School.findOne({ schoolId: refundEvent.schoolId }).lean();
+      const school = await School.findOne({ schoolId: refundEvent.schoolId });
       const allowedFields = school?.webhookPayloadConfig?.allowedFields || null;
       const { buildWebhookPayload } = require('../utils/buildWebhookPayload');
       const { fireWebhookToEndpoints } = require('./webhookService');

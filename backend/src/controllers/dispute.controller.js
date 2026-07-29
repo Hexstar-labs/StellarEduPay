@@ -92,7 +92,7 @@ async function _notifyDisputeChange(schoolId, eventName, disputeDoc) {
   // Route through the dispute.* notification helpers so the payload shape stays
   // consistent with the other webhook events (mirrors notifyPaymentConfirmed/…).
   try {
-    const school = await School.findOne({ schoolId }, { webhookUrl: 1, webhookSecret: 1 }).lean();
+    const school = await School.findOne({ schoolId }, { webhookUrl: 1, webhookSecret: 1 });
     if (school && school.webhookUrl) {
       const secret = school.webhookSecret || null;
       if (eventName === 'dispute.created') {
