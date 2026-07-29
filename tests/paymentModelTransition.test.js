@@ -60,11 +60,6 @@ const mockMongooseFactory = () => {
 jest.mock('mongoose', () => mockMongooseFactory());
 jest.mock('../backend/node_modules/mongoose', () => mockMongooseFactory());
 jest.mock('../backend/src/utils/softDelete', () => jest.fn());
-jest.mock('../backend/src/utils/memoEncryption', () => ({
-  encryptMemo: jest.fn(v => v),
-  decryptMemo: jest.fn(v => v),
-}));
-
 beforeAll(() => {
   jest.resetModules();
   require('../backend/src/models/paymentModel');

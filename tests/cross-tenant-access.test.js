@@ -187,12 +187,6 @@ jest.mock('../backend/src/services/retryService', () => ({
   isRetryWorkerRunning: jest.fn().mockReturnValue(false),
 }));
 
-jest.mock('../backend/src/utils/memoEncryption', () => ({
-  encryptMemo: jest.fn(x => x),
-  decryptMemo: jest.fn(x => x),
-  isEncryptionEnabled: jest.fn(() => false),
-}));
-
 jest.mock('../backend/src/cache', () => {
   const store = {};
   return {
