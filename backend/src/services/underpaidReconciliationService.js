@@ -9,6 +9,7 @@
  * - Documentation and audit trail of all reconciliation actions
  */
 
+const mongoose = require('mongoose');
 const Payment = require('../models/paymentModel');
 const Student = require('../models/studentModel');
 const logger = require('../utils/logger');
@@ -31,10 +32,14 @@ async function applyPartialCredit(paymentId, creditAmount, creditAppliedBy, scho
     throw new Error('creditAmount must be a positive number');
   }
 
-  // Find payment by ID or txHash
-  let payment = await Payment.findById(paymentId);
-  if (!payment && paymentId.length > 20) {
-    // Likely a txHash
+  // Find payment by ID or txHash.
+  // Guard with isValid() first: passing a non-ObjectId string (e.g. a 64-char
+  // Stellar txHash) to findById throws a CastError synchronously, bypassing
+  // the intended txHash fallback entirely.
+  let payment = mongoose.Types.ObjectId.isValid(paymentId)
+    ? await Payment.findById(paymentId)
+    : null;
+  if (!payment) {
     payment = await Payment.findOne({ txHash: paymentId, schoolId });
   }
 
@@ -134,10 +139,11 @@ async function applyPartialCredit(paymentId, creditAmount, creditAppliedBy, scho
  * @returns {Promise<object>} Updated payment document
  */
 async function initiateRefund(paymentId, refundInitiatedBy, schoolId, refundNote = null) {
-  // Find payment by ID or txHash
-  let payment = await Payment.findById(paymentId);
-  if (!payment && paymentId.length > 20) {
-    // Likely a txHash
+  // Find payment by ID or txHash (same isValid() guard as applyPartialCredit)
+  let payment = mongoose.Types.ObjectId.isValid(paymentId)
+    ? await Payment.findById(paymentId)
+    : null;
+  if (!payment) {
     payment = await Payment.findOne({ txHash: paymentId, schoolId });
   }
 
@@ -187,10 +193,11 @@ async function completeRefund(paymentId, refundTxHash) {
     throw new Error('refundTxHash is required to complete refund');
   }
 
-  // Find payment by ID or txHash
-  let payment = await Payment.findById(paymentId);
-  if (!payment && paymentId.length > 20) {
-    // Likely a txHash
+  // Find payment by ID or txHash (same isValid() guard as applyPartialCredit)
+  let payment = mongoose.Types.ObjectId.isValid(paymentId)
+    ? await Payment.findById(paymentId)
+    : null;
+  if (!payment) {
     payment = await Payment.findOne({ txHash: paymentId });
   }
 
