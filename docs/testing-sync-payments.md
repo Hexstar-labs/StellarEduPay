@@ -124,12 +124,22 @@ These tests ensure:
 
 ### extractValidPayment Function
 
-The `extractValidPayment` function is the first line of defense:
+The `extractValidPayment` function is the first line of defense. See
+`backend/src/services/stellarService.js` (`extractValidPayment`) for the
+authoritative implementation; current behavior:
 
 ```javascript
 // Returns null for invalid transactions
-if (!tx.successful) return null;
-if (!tx.memo || !tx.memo.trim()) return null;  // Catches undefined and empty memos
+if (tx.successful !== true) return null;
+
+const memoType = innerTx.memo_type || 'none';
+if (memoType === 'none') return null;              // MEMO_NONE
+if (!normalizeMemoType(memoType)) return null;      // MEMO_RETURN (unsupported)
+
+// MEMO_TEXT is used as-is; MEMO_ID/MEMO_HASH are decoded back to the
+// canonical intent memo (#1118). Any decode failure is also rejected.
+const memo = decodeMemoToCanonical(innerTx.memo, memoType);
+if (!memo) return null;
 ```
 
 ### syncPaymentsForSchool Function
