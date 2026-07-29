@@ -21,6 +21,7 @@ jest.mock('../src/models/outboxModel', () => ({
 
 jest.mock('../src/events/paymentEvents', () => ({
   emit: jest.fn(),
+  asyncEmit: jest.fn().mockResolvedValue([]),
 }));
 
 // Simulates a log-transport failure specifically on dispatchOutboxEvents' own

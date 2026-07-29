@@ -10,6 +10,7 @@ jest.mock('../src/models/outboxModel', () => ({
 
 jest.mock('../src/events/paymentEvents', () => ({
   emit: jest.fn(),
+  asyncEmit: jest.fn().mockResolvedValue([]),
 }));
 
 const mockOutboxLogger = {
@@ -62,8 +63,8 @@ describe('outboxDispatcher dead-letter handling', () => {
       processed: false,
       deadLettered: { $ne: true },
     });
-    expect(paymentEvents.emit).toHaveBeenCalledTimes(1);
-    expect(paymentEvents.emit).toHaveBeenCalledWith('payment.confirmed', healthyEvent.payload);
+    expect(paymentEvents.asyncEmit).toHaveBeenCalledTimes(1);
+    expect(paymentEvents.asyncEmit).toHaveBeenCalledWith('payment.confirmed', healthyEvent.payload);
     expect(Outbox.findByIdAndUpdate).toHaveBeenCalledWith(
       exhaustedEvent._id,
       expect.objectContaining({
@@ -97,9 +98,9 @@ describe('outboxDispatcher dead-letter handling', () => {
     const failure = new Error('listener crashed');
 
     mockOutboxBatch([failingEvent]);
-    paymentEvents.emit.mockImplementationOnce(() => {
-      throw failure;
-    });
+    paymentEvents.asyncEmit.mockResolvedValueOnce([
+      { status: 'rejected', reason: failure },
+    ]);
 
     await dispatchOutboxEvents();
 
@@ -107,7 +108,7 @@ describe('outboxDispatcher dead-letter handling', () => {
       failingEvent._id,
       expect.objectContaining({
         retryCount: 3,
-        lastError: failure.message,
+        lastError: 'Listener(s) rejected: listener crashed',
         deadLettered: true,
         deadLetteredAt: expect.any(Date),
         deadLetterReason: 'max_retries_exhausted',
