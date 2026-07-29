@@ -202,7 +202,16 @@ export default function PaymentForm() {
             Enter your student ID to get payment instructions.
           </p>
 
-          <form onSubmit={(e) => { e.preventDefault(); lookupStudent(studentId); }}>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            // #1215 — cancel any pending debounce timer so that submitting the
+            // form immediately after typing doesn't fire a duplicate lookup.
+            if (debounceRef.current) {
+              clearTimeout(debounceRef.current);
+              debounceRef.current = null;
+            }
+            lookupStudent(studentId);
+          }}>
             <label className="pf-section-label" htmlFor="sid">Student ID</label>
             <div className="pf-id-input-wrap">
               <span className="pf-search-icon"><IconSearch size={15} /></span>
