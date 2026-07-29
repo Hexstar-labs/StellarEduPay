@@ -10,6 +10,7 @@ import {
   IconLayers,
   IconFileText,
   IconMessageCircle,
+  IconDollarSign,
 } from "./Icons";
 
 const PUBLIC_NAV = [
@@ -19,6 +20,7 @@ const PUBLIC_NAV = [
 ];
 
 const ADMIN_NAV = [
+  { href: "/fees",            label: "Fees",        Icon: IconDollarSign },
   { href: "/fee-adjustments", label: "Fee Rules",   Icon: IconLayers },
   { href: "/fees",            label: "Fees",        Icon: IconCreditCard },
   { href: "/audit-logs",      label: "Audit Logs",  Icon: IconFileText },
