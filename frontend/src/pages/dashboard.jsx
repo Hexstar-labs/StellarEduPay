@@ -108,6 +108,12 @@ function Dashboard() {
       });
   }, []);
 
+  // Tracks whether the page effect is running for the very first time.
+  // On mount the filter effect already calls fetchStudents(1, …), so the page
+  // effect must skip that initial run to avoid a duplicate /students request
+  // (#1214).  Subsequent page changes (user clicks Next/Prev) are not skipped.
+  const isInitialPageRender = useRef(true);
+
   useEffect(() => {
     getSyncStatus()
       .then(({ data }) => setLastSyncAt(data.lastSyncAt))
@@ -121,6 +127,11 @@ function Dashboard() {
   }, [debouncedSearch, statusFilter, classFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    // Skip the initial render — the filter effect above already fetched page 1.
+    if (isInitialPageRender.current) {
+      isInitialPageRender.current = false;
+      return;
+    }
     fetchStudents(page, debouncedSearch, statusFilter, classFilter);
   }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
