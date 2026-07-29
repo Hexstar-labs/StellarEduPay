@@ -68,13 +68,20 @@ async function main() {
   const failed = results.filter((r) => r.status === 'error');
 
   console.log(`${results.length} school(s) with a stored signing key found.`);
+  results
+    .filter((r) => r.status === 'ok')
+    .forEach((r) =>
+      console.log(
+        `Rotated signer key for school: ${r.schoolId}` + (apply ? '' : ' (dry run — not persisted)')
+      )
+    );
   console.log(
     `${results.length - failed.length} re-encrypted successfully` +
       (apply ? '.' : ' (dry run — no writes made; re-run with --apply to persist).')
   );
   if (failed.length > 0) {
     console.error(`${failed.length} failed:`);
-    failed.forEach((f) => console.error(`  - ${f.schoolId}: ${f.error}`));
+    failed.forEach((f) => console.error(`  - Failed to rotate signer key for school: ${f.schoolId}: ${f.error}`));
   }
 
   await mongoose.disconnect();
