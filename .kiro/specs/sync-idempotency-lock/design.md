@@ -1,6 +1,33 @@
 # Design Document: sync-idempotency-lock
 
-## Overview
+## Implementation Status
+
+**Not implemented as specified.** This document describes a proposed per-transaction
+`SyncLock` Mongoose model that was never built — no such model exists in
+`backend/src/models/`, and every task in `tasks.md` is unchecked.
+
+The idempotency problem this spec addresses is instead handled by the existing
+**`distributedLock.js`** service (Redis-backed, in-process fallback when Redis is
+unconfigured), via two locks:
+
+- A **per-school sync lock** (`sync:lock:<schoolId>`), acquired in
+  `paymentAdminController.js` (`syncAllPayments`) and `transactionPollingService.js`
+  before either one calls `syncPaymentsForSchool()`. A contended acquisition
+  returns/skips rather than running a concurrent sync for the same school.
+- A **per-student balance lock** (`sync:lock:<schoolId>:student:<studentId>`, see
+  `distributedLock.studentBalanceLockKey`), acquired inside `syncPaymentsForSchool()`
+  (`stellarService.js`) around the balance read-update-write section, and shared with
+  `verifyPayment` (`paymentController.js`) so a manual verification and a sync run
+  can't race on the same student's balance.
+
+The `Payment.txHash` unique index remains as the defence-in-depth guard described in
+Requirement 3 below, which is the one part of this spec that did ship.
+
+The rest of this document is kept for historical/reference purposes only and does not
+describe the current system. Do not use it to reason about how sync idempotency
+actually works today — see `distributedLock.js` and the call sites above instead.
+
+## Overview (original proposal, not built)
 
 `POST /api/payments/sync` (and the background poller) both call `syncPayments()` in `stellarService.js`. Because the function fetches a batch of transactions and processes each one sequentially, two concurrent invocations can race: both read the same `txHash` from Horizon before either has written a `Payment` document, so both proceed through fee validation and student-status updates before the second one hits the `txHash` unique-index error.
 
