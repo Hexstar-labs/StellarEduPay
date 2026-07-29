@@ -1,0 +1,364 @@
+{
+  "title": "StellarEduPay — Infrastructure",
+  "uid": "stellaredupay-infra",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "tags": ["infrastructure", "mongodb", "redis", "node"],
+  "panels": [
+    {
+      "id": 100,
+      "type": "text",
+      "title": "",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "options": {
+        "mode": "markdown",
+        "content": "## MongoDB"
+      }
+    },
+    {
+      "id": 1,
+      "title": "MongoDB — Current Connections",
+      "description": "Number of active client connections to MongoDB. Approaching the configured connection pool limit indicates pool exhaustion.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 1, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "mongodb_connections{state=\"current\"}",
+          "legendFormat": "current"
+        },
+        {
+          "expr": "mongodb_connections{state=\"available\"}",
+          "legendFormat": "available"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2 }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "current" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "available" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "title": "MongoDB — Operation Rate (ops/s)",
+      "description": "Rate of insert, query, update, delete, and command operations. Useful for correlating DB load with application throughput.",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 1, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "rate(mongodb_op_counters_total{type=\"insert\"}[1m])",  "legendFormat": "insert" },
+        { "expr": "rate(mongodb_op_counters_total{type=\"query\"}[1m])",   "legendFormat": "query" },
+        { "expr": "rate(mongodb_op_counters_total{type=\"update\"}[1m])",  "legendFormat": "update" },
+        { "expr": "rate(mongodb_op_counters_total{type=\"delete\"}[1m])",  "legendFormat": "delete" },
+        { "expr": "rate(mongodb_op_counters_total{type=\"command\"}[1m])", "legendFormat": "command" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+    {
+      "id": 3,
+      "title": "MongoDB — WiredTiger Cache Used vs Dirty",
+      "description": "WiredTiger cache bytes in use and dirty bytes pending write to disk. High dirty ratio can trigger checkpoint pressure and increase latency.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 9, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "mongodb_wiredtiger_cache_bytes{type=\"bytes currently in the cache\"}",
+          "legendFormat": "in cache"
+        },
+        {
+          "expr": "mongodb_wiredtiger_cache_bytes{type=\"tracked dirty bytes in the cache\"}",
+          "legendFormat": "dirty"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    },
+    {
+      "id": 4,
+      "title": "MongoDB — Replication Lag (seconds)",
+      "description": "Seconds behind primary for each replica set member. Values above 30s during payment spikes indicate replication pressure.",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 9, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "mongodb_mongod_replset_member_replication_lag",
+          "legendFormat": "{{member_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": 0 },
+              { "color": "yellow", "value": 10 },
+              { "color": "red",    "value": 30 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 200,
+      "type": "text",
+      "title": "",
+      "gridPos": { "x": 0, "y": 17, "w": 24, "h": 1 },
+      "options": {
+        "mode": "markdown",
+        "content": "## Redis"
+      }
+    },
+    {
+      "id": 5,
+      "title": "Redis — Memory Used vs RSS vs Limit",
+      "description": "redis_memory_used_bytes is the allocator view; RSS is what the OS sees. A large RSS/used ratio indicates fragmentation. The dashed line is maxmemory.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 18, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "redis_memory_used_bytes",     "legendFormat": "used" },
+        { "expr": "redis_memory_used_rss_bytes", "legendFormat": "rss" },
+        { "expr": "redis_config_maxmemory",      "legendFormat": "maxmemory limit" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2 }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "maxmemory limit" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash" } },
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "title": "Redis — Memory Usage % of Limit",
+      "description": "Percentage of maxmemory currently in use. Above 80% risks eviction of BullMQ job keys.",
+      "type": "gauge",
+      "gridPos": { "x": 12, "y": 18, "w": 6, "h": 8 },
+      "targets": [
+        {
+          "expr": "100 * redis_memory_used_bytes / clamp_min(redis_config_maxmemory, 1)",
+          "legendFormat": "Memory %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": 0 },
+              { "color": "yellow", "value": 70 },
+              { "color": "red",    "value": 85 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Redis — Keyspace Hits vs Misses",
+      "description": "Cache hit rate. A falling hit rate during a payment spike can indicate BullMQ keys being evicted.",
+      "type": "timeseries",
+      "gridPos": { "x": 18, "y": 18, "w": 6, "h": 8 },
+      "targets": [
+        { "expr": "rate(redis_keyspace_hits_total[1m])",   "legendFormat": "hits/s" },
+        { "expr": "rate(redis_keyspace_misses_total[1m])", "legendFormat": "misses/s" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "misses/s" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }]
+          }
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "title": "Redis — Connected Clients",
+      "description": "Number of clients connected to Redis. Spikes here correlate with BullMQ worker concurrency and backend connection pool size.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 26, "w": 8, "h": 6 },
+      "targets": [
+        { "expr": "redis_connected_clients", "legendFormat": "clients" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "id": 9,
+      "title": "Redis — Evicted Keys/s",
+      "description": "Rate at which keys are evicted due to memory pressure. Any evictions on a payments platform are a critical signal.",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 26, "w": 8, "h": 6 },
+      "targets": [
+        { "expr": "rate(redis_evicted_keys_total[1m])", "legendFormat": "evictions/s" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red",   "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Redis — Command Rate (cmds/s)",
+      "description": "Total Redis commands processed per second — overall Redis throughput indicator.",
+      "type": "timeseries",
+      "gridPos": { "x": 16, "y": 26, "w": 8, "h": 6 },
+      "targets": [
+        { "expr": "rate(redis_commands_processed_total[1m])", "legendFormat": "cmds/s" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+    {
+      "id": 300,
+      "type": "text",
+      "title": "",
+      "gridPos": { "x": 0, "y": 32, "w": 24, "h": 1 },
+      "options": {
+        "mode": "markdown",
+        "content": "## Host / Node"
+      }
+    },
+    {
+      "id": 11,
+      "title": "Host — CPU Utilisation %",
+      "description": "Overall CPU utilisation across all cores. Sustained > 80% indicates the host is CPU-bound.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 33, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[1m])) * 100)",
+          "legendFormat": "cpu used %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": 0 },
+              { "color": "yellow", "value": 70 },
+              { "color": "red",    "value": 85 }
+            ]
+          },
+          "custom": { "lineWidth": 2 }
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Host — Memory Usage",
+      "description": "Physical memory: total, used (total - available), and available. Available includes page cache.",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 33, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "node_memory_MemTotal_bytes",                                  "legendFormat": "total" },
+        { "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "legendFormat": "used" },
+        { "expr": "node_memory_MemAvailable_bytes",                              "legendFormat": "available" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "bytes" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "used" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "available" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          }
+        ]
+      }
+    },
+    {
+      "id": 13,
+      "title": "Host — Memory Used %",
+      "description": "Percentage of physical RAM in use. Above 90% risks the OOM killer stopping containers.",
+      "type": "gauge",
+      "gridPos": { "x": 0, "y": 41, "w": 6, "h": 6 },
+      "targets": [
+        {
+          "expr": "100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))",
+          "legendFormat": "memory %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": 0 },
+              { "color": "yellow", "value": 75 },
+              { "color": "red",    "value": 90 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 14,
+      "title": "Host — Disk I/O (bytes/s)",
+      "description": "Read and write throughput across all block devices. Sustained high write rates indicate MongoDB checkpoint pressure.",
+      "type": "timeseries",
+      "gridPos": { "x": 6, "y": 41, "w": 9, "h": 6 },
+      "targets": [
+        { "expr": "sum(rate(node_disk_read_bytes_total[1m]))",    "legendFormat": "read" },
+        { "expr": "sum(rate(node_disk_written_bytes_total[1m]))", "legendFormat": "write" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" } }
+    },
+    {
+      "id": 15,
+      "title": "Host — Network I/O (bytes/s)",
+      "description": "Inbound and outbound bytes per second across all interfaces except loopback and veth. Useful during start-of-term fee spikes.",
+      "type": "timeseries",
+      "gridPos": { "x": 15, "y": 41, "w": 9, "h": 6 },
+      "targets": [
+        {
+          "expr": "sum(rate(node_network_receive_bytes_total{device!~\"lo|veth.*\"}[1m]))",
+          "legendFormat": "rx"
+        },
+        {
+          "expr": "sum(rate(node_network_transmit_bytes_total{device!~\"lo|veth.*\"}[1m]))",
+          "legendFormat": "tx"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" } }
+    }
+  ]
+}
