@@ -99,6 +99,16 @@ async function setupMfa(req, res) {
       return res.status(404).json({ error: 'School not found.', code: 'SCHOOL_NOT_FOUND' });
     }
 
+    // #1180 — Refuse to overwrite credentials when MFA is already active.
+    // An authenticated admin must call /mfa/disable (with a valid TOTP code)
+    // before re-issuing a new secret, preventing silent credential overwrites.
+    if (school.mfaEnabled) {
+      return res.status(400).json({
+        error: 'MFA is already active for this school. Disable MFA before setting it up again.',
+        code: 'MFA_ALREADY_ACTIVE',
+      });
+    }
+
     const generated = speakeasy.generateSecret({
       name: `StellarEduPay (${school.name || slug})`,
       issuer: 'StellarEduPay',
@@ -113,6 +123,18 @@ async function setupMfa(req, res) {
     school.mfaSecret = encryptMfaSecret(totpSecret);
     school.mfaBackupCodes = backupCodes.map((c) => ({ hash: hashBackupCode(c), used: false }));
     await school.save();
+
+    // #1180 — Audit credential generation so every setup attempt is traceable.
+    await logAudit({
+      schoolId: school.schoolId || slug,
+      action: 'MFA_SECRET_GENERATED',
+      performedBy: req.admin?.username || req.user?.userId || req.admin?.email || req.user?.email || 'admin',
+      targetId: school._id?.toString() || slug,
+      targetType: 'school',
+      details: { slug },
+      result: 'success',
+      severity: 'high',
+    });
 
     return res.json({
       secret: totpSecret,

@@ -103,9 +103,11 @@ async function listEndpoints(req, res, next) {
 async function getEndpoint(req, res, next) {
   try {
     const schoolId = _callerSchoolId(req);
-    const endpoint = await WebhookEndpoint.findById(req.params.id).lean();
+    // Scope the query to the caller's schoolId so cross-tenant IDs produce the
+    // same 404 as non-existent IDs — eliminating the existence side-channel
+    // that a prior 403 vs 404 divergence would reveal. (#1179)
+    const endpoint = await WebhookEndpoint.findOne({ _id: req.params.id, schoolId }).lean();
     if (!endpoint) return res.status(404).json({ error: 'Endpoint not found', code: 'NOT_FOUND' });
-    if (endpoint.schoolId !== schoolId) return res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
     // secret is stripped by toJSON transform; lean() bypasses that — strip manually
     delete endpoint.secret;
     return res.json(endpoint);
@@ -118,9 +120,10 @@ async function getEndpoint(req, res, next) {
 async function updateEndpoint(req, res, next) {
   try {
     const schoolId = _callerSchoolId(req);
-    const endpoint = await WebhookEndpoint.findById(req.params.id);
+    // Scope the query to the caller's schoolId — cross-tenant IDs and missing
+    // IDs both return 404, removing the existence side-channel. (#1179)
+    const endpoint = await WebhookEndpoint.findOne({ _id: req.params.id, schoolId });
     if (!endpoint) return res.status(404).json({ error: 'Endpoint not found', code: 'NOT_FOUND' });
-    if (endpoint.schoolId !== schoolId) return res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
 
     const { url, secret, subscribedEvents, isActive, description } = req.body;
 
@@ -167,9 +170,10 @@ async function updateEndpoint(req, res, next) {
 async function deleteEndpoint(req, res, next) {
   try {
     const schoolId = _callerSchoolId(req);
-    const endpoint = await WebhookEndpoint.findById(req.params.id);
+    // Scope the query to the caller's schoolId — cross-tenant IDs and missing
+    // IDs both return 404, removing the existence side-channel. (#1179)
+    const endpoint = await WebhookEndpoint.findOne({ _id: req.params.id, schoolId });
     if (!endpoint) return res.status(404).json({ error: 'Endpoint not found', code: 'NOT_FOUND' });
-    if (endpoint.schoolId !== schoolId) return res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
 
     await WebhookEndpoint.deleteOne({ _id: endpoint._id });
 
