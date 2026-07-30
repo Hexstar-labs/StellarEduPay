@@ -113,7 +113,13 @@ async function checkStudentBalanceConsistency(schoolId) {
       { $group: { _id: null, computedTotal: { $sum: '$amount' } } },
     ]);
 
-    const computedTotal = agg?.computedTotal ?? 0;
+    // creditAdjustments represents cumulative manual partial-credit overrides
+    // applied by admins. They are intentional deviations from the raw payment
+    // sum and must be included in the expected total so the consistency job
+    // never treats them as drift and silently reverts them.
+    const paymentTotal = agg?.computedTotal ?? 0;
+    const creditAdjustments = student.creditAdjustments || 0;
+    const computedTotal = parseFloat((paymentTotal + creditAdjustments).toFixed(7));
     const computedRemaining = Math.max(0, student.feeAmount - computedTotal);
 
     const totalDrift = Math.abs(computedTotal - (student.totalPaid || 0));
@@ -203,5 +209,6 @@ async function checkConsistency() {
 module.exports = {
   checkConsistency,
   checkSchoolConsistency,
+  checkStudentBalanceConsistency,
   fetchChainTransactions,
 };

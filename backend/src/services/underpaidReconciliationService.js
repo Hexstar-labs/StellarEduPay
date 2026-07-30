@@ -14,6 +14,7 @@ const Payment = require('../models/paymentModel');
 const Student = require('../models/studentModel');
 const logger = require('../utils/logger');
 const lock = require('./distributedLock');
+const { logAudit } = require('./auditService');
 
 // Shares the same TTL convention as the other callers of the per-student
 // balance lock (paymentController.verifyPayment, stellarService.syncPaymentsForSchool).
@@ -100,18 +101,41 @@ async function applyPartialCredit(paymentId, creditAmount, creditAppliedBy, scho
     payment.underpaidReconciliation.creditAppliedBy = creditAppliedBy;
     await payment.save();
 
-    // Update student's cumulative balance
+    // Update student's cumulative balance.
+    // creditAdjustments is incremented atomically so the consistency and
+    // reconciliation jobs can add it to the raw payment sum and never treat
+    // this admin-applied credit as drift.
     const newTotalPaid = (student.totalPaid || 0) + creditAmount;
     const newRemainingBalance = Math.max(0, student.feeAmount - newTotalPaid);
     await Student.findOneAndUpdate(
       { schoolId: payment.schoolId, studentId: payment.studentId },
       {
-        totalPaid: parseFloat(newTotalPaid.toFixed(7)),
-        remainingBalance: parseFloat(newRemainingBalance.toFixed(7)),
-        feePaid: newTotalPaid >= student.feeAmount,
+        $inc: { creditAdjustments: parseFloat(creditAmount.toFixed(7)) },
+        $set: {
+          totalPaid: parseFloat(newTotalPaid.toFixed(7)),
+          remainingBalance: parseFloat(newRemainingBalance.toFixed(7)),
+          feePaid: newTotalPaid >= student.feeAmount,
+        },
       },
       { new: true }
     );
+
+    // Audit log: record the manual credit so there is an immutable trail of
+    // every admin-applied adjustment that the consistency job must respect.
+    await logAudit({
+      schoolId: payment.schoolId,
+      action: 'PARTIAL_CREDIT_APPLIED',
+      performedBy: creditAppliedBy,
+      targetId: payment.studentId,
+      targetType: 'Student',
+      details: {
+        paymentId: payment._id.toString(),
+        txHash: payment.txHash,
+        creditAmount,
+        newTotalPaid: parseFloat(newTotalPaid.toFixed(7)),
+        newRemainingBalance: parseFloat(newRemainingBalance.toFixed(7)),
+      },
+    });
   } finally {
     await lock.release(studentLockKey, studentLockToken);
   }
