@@ -6,6 +6,7 @@ import "../styles/redesign.css";
 import Navbar from "../components/Navbar";
 import AppLayout from "../components/AppLayout";
 import ErrorBoundary from "../components/ErrorBoundary";
+import { AdminAuthProvider } from "../hooks/AdminAuthContext";
 
 export const ThemeContext = createContext({ dark: false, toggle: () => {} });
 export const useTheme = () => useContext(ThemeContext);
@@ -47,20 +48,22 @@ export default function MyApp({ Component, pageProps }) {
   const useAppLayout = APP_LAYOUT_ROUTES.includes(pathname);
 
   return (
-    <ThemeContext.Provider value={{ dark, toggle: () => setDark((d) => !d) }}>
-      <Head>
-        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-      </Head>
-      <Navbar />
-      <ErrorBoundary>
-        {useAppLayout ? (
-          <AppLayout>
+    <AdminAuthProvider>
+      <ThemeContext.Provider value={{ dark, toggle: () => setDark((d) => !d) }}>
+        <Head>
+          <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+        </Head>
+        <Navbar />
+        <ErrorBoundary>
+          {useAppLayout ? (
+            <AppLayout>
+              <Component {...pageProps} />
+            </AppLayout>
+          ) : (
             <Component {...pageProps} />
-          </AppLayout>
-        ) : (
-          <Component {...pageProps} />
-        )}
-      </ErrorBoundary>
-    </ThemeContext.Provider>
+          )}
+        </ErrorBoundary>
+      </ThemeContext.Provider>
+    </AdminAuthProvider>
   );
 }

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import TestnetBanner from "./TestnetBanner";
 import { useTheme } from "../pages/_app";
-import { useAdminAuth } from "../hooks/useAdminAuth";
+import { useAdminAuthContext } from "../hooks/AdminAuthContext";
 
 const PUBLIC_LINKS = [
   { href: "/pay-fees",  label: "Pay Fees" },
@@ -37,7 +37,7 @@ export default function Navbar() {
   const { pathname } = useRouter();
   const [open, setOpen] = useState(false);
   const { dark, toggle } = useTheme();
-  const { isAdmin, logout } = useAdminAuth();
+  const { isAdmin, logout } = useAdminAuthContext();
   const links = isAdmin ? [...PUBLIC_LINKS, ...ADMIN_LINKS] : PUBLIC_LINKS;
 
   useEffect(() => { setOpen(false); }, [pathname]);

@@ -1,7 +1,7 @@
 import Head from 'next/head';
 import { useState } from 'react';
 import { useRouter } from 'next/router';
-import { useAdminAuth } from '../hooks/useAdminAuth';
+import { useAdminAuthContext } from '../hooks/AdminAuthContext';
 import { getErrorMessage } from '../utils/errorMessages';
 import api from '../services/api';
 
@@ -16,7 +16,7 @@ function safeReturnTo(returnTo) {
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login } = useAdminAuth();
+  const { login } = useAdminAuthContext();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
