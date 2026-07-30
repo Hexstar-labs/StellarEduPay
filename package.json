@@ -40,7 +40,10 @@
       "^react$": "<rootDir>/node_modules/react",
       "^react-dom$": "<rootDir>/node_modules/react-dom",
       "^react/(.*)$": "<rootDir>/node_modules/react/$1",
-      "^react-dom/(.*)$": "<rootDir>/node_modules/react-dom/$1"
+      "^react-dom/(.*)$": "<rootDir>/node_modules/react-dom/$1",
+      "^axios$": "<rootDir>/tests/__stubs__/axios.js",
+      "^next/router$": "<rootDir>/tests/__stubs__/next-router.js",
+      "^next/link$": "<rootDir>/tests/__stubs__/next-link.js"
     },
     "transform": {
       "^.+\\.[jt]sx?$": "babel-jest"
