@@ -306,6 +306,11 @@ async function processPendingVerifications() {
     });
   } finally {
     _running = false;
+    // Ping heartbeat so the liveness check confirms this worker ran.
+    try {
+      const { ping, WORKER_NAMES } = require('./workerHeartbeat');
+      ping(WORKER_NAMES.RETRY_WORKER);
+    } catch (_) { /* non-critical */ }
   }
 }
 
@@ -314,6 +319,10 @@ function startRetryWorker() {
   logger.info(
     `Starting — interval: ${RETRY_INTERVAL_MS}ms, max attempts: ${MAX_ATTEMPTS}`,
   );
+  try {
+    const { markStarted, WORKER_NAMES } = require('./workerHeartbeat');
+    markStarted(WORKER_NAMES.RETRY_WORKER);
+  } catch (_) { /* non-critical */ }
   processPendingVerifications();
   _timer = setInterval(processPendingVerifications, RETRY_INTERVAL_MS);
 }
@@ -322,6 +331,10 @@ function stopRetryWorker() {
   if (_timer) {
     clearInterval(_timer);
     _timer = null;
+    try {
+      const { markStopped, WORKER_NAMES } = require('./workerHeartbeat');
+      markStopped(WORKER_NAMES.RETRY_WORKER);
+    } catch (_) { /* non-critical */ }
     logger.info("Stopped");
   }
 }

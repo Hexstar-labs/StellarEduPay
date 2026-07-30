@@ -8,6 +8,7 @@ const { getReminderStatus } = require('../services/reminderService');
 const { getCachedRates } = require('../services/currencyConversionService');
 const { getAuditHealth } = require('../services/auditService');
 const { getRedisStatus } = require('../config/redisClient');
+const { checkLiveness } = require('../services/workerHeartbeat');
 const logger = require('../utils/logger');
 const { isReady: isShutdownReady } = require('../services/shutdownManager');
 
@@ -107,6 +108,14 @@ async function healthCheck(req, res) {
     overallStatus = 'degraded';
   }
 
+  // Worker liveness check — any stale/not_started worker triggers 503 so
+  // orchestrators can restart the pod. "starting" is healthy (within grace).
+  const workerLiveness = checkLiveness();
+  if (!workerLiveness.allHealthy && overallStatus !== 'unhealthy') {
+    overallStatus = 'unhealthy';
+    statusCode = 503;
+  }
+
   // Price feed status
   const cachedRates = getCachedRates();
   const priceFeedStatus = Object.entries(cachedRates).map(([currency, data]) => {
@@ -165,6 +174,10 @@ async function healthCheck(req, res) {
         rates: priceFeedStatus,
       },
       auditLog: getAuditHealth(),
+      workers: {
+        healthy: workerLiveness.allHealthy,
+        detail: workerLiveness.workers,
+      },
     },
   };
 

@@ -98,3 +98,69 @@ Webhook secrets, database credentials, queue credentials, and deployment tokens 
 6. Decide whether to promote the backup or repair selected records.
 7. Communicate RPO impact before production promotion.
 8. Resume workers only after database and queue state are consistent.
+
+### Running the Restore Script
+
+The restore script (`scripts/restore.sh`) uses **safe defaults** — it will not drop
+existing collections unless you explicitly request it.
+
+#### Safe defaults (no data loss risk)
+
+```sh
+MONGO_URI=mongodb://localhost:27017/stellaredupay \
+BACKUP_FILE=./backups/20260324T120000Z.gz \
+  ./scripts/restore.sh
+```
+
+This merges the backup into the existing database. Records already in the database
+are preserved; the backup fills in anything that is missing.
+
+#### Dry-run mode — preview without mutation
+
+Use `--dry-run` (or `DRY_RUN=true`) to print the target URI and the exact
+`mongorestore` command that *would* be executed, without touching the database:
+
+```sh
+MONGO_URI=mongodb://localhost:27017/stellaredupay \
+BACKUP_FILE=./backups/20260324T120000Z.gz \
+  ./scripts/restore.sh --dry-run
+```
+
+Always run dry-run first in production to confirm the correct archive and URI
+before committing to the restore.
+
+#### Drop-and-replace restore (destructive — requires confirmation)
+
+Set `DROP=true` (or pass `--drop`) to drop existing collections before restoring.
+The script will prompt for confirmation before proceeding:
+
+```sh
+MONGO_URI=mongodb://localhost:27017/stellaredupay \
+BACKUP_FILE=./backups/20260324T120000Z.gz \
+DROP=true \
+  ./scripts/restore.sh
+```
+
+```
+WARNING: You are about to DROP existing collections on mongodb://localhost:27017/stellaredupay.
+         This will permanently delete all data in those collections before
+         restoring from: ./backups/20260324T120000Z.gz
+
+Are you sure? [y/N]
+```
+
+You must type `y` or `Y` to proceed; any other input aborts the restore.
+
+#### Bypassing the interactive prompt (scripted pipelines)
+
+Pass `--yes` or `-y` to skip the interactive confirmation. Only use this in
+automated pipelines where the intent to drop has already been reviewed:
+
+```sh
+MONGO_URI=mongodb://localhost:27017/stellaredupay \
+BACKUP_FILE=./backups/20260324T120000Z.gz \
+DROP=true \
+  ./scripts/restore.sh --yes
+```
+
+**Never combine `--yes` with an unreviewed `MONGO_URI` in production scripts.**

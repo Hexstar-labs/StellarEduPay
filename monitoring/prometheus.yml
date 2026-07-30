@@ -18,10 +18,13 @@ rule_files:
 scrape_configs:
   - job_name: stellaredupay
     metrics_path: /metrics
-    # Replace this with the value of METRICS_TOKEN from backend/.env
+    # Set METRICS_TOKEN in backend/.env, then substitute it here before deploying.
+    # Generate a strong token with: openssl rand -hex 32
+    # Replace the placeholder below with the actual token value.
+    # Never use "change_me_to_a_secure_random_token" in any environment.
     authorization:
       type: Bearer
-      credentials: "change_me_to_a_secure_random_token"
+      credentials: "REPLACE_WITH_METRICS_TOKEN"
     static_configs:
       # host.docker.internal resolves to the Docker host on Mac/Windows.
       # On Linux it is mapped to host-gateway via extra_hosts in docker-compose.monitoring.yml.

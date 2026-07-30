@@ -341,6 +341,12 @@ async function runReminders() {
     logger.error('Reminder run failed', { error: err.message });
   } finally {
     _running = false;
+    // Ping heartbeat after every tick (success or error) so liveness checks can
+    // confirm the scheduler loop is still alive.
+    try {
+      const { ping, WORKER_NAMES } = require('./workerHeartbeat');
+      ping(WORKER_NAMES.REMINDER_SCHEDULER);
+    } catch (_) { /* non-critical */ }
   }
 }
 
@@ -354,6 +360,11 @@ function startReminderScheduler() {
   
   logger.info(`Starting — interval: ${REMINDER_INTERVAL_MS}ms, cooldown: ${REMINDER_COOLDOWN_HOURS}h, maxCount: ${REMINDER_MAX_COUNT}`);
 
+  try {
+    const { markStarted, WORKER_NAMES } = require('./workerHeartbeat');
+    markStarted(WORKER_NAMES.REMINDER_SCHEDULER);
+  } catch (_) { /* non-critical */ }
+
   // Run once immediately so we don't wait a full interval on startup.
   // Each school's send window gate prevents blasting outside local hours.
   setImmediate(() => runReminders().catch(err => logger.error('Initial reminder run failed', { error: err.message })));
@@ -366,6 +377,10 @@ function stopReminderScheduler() {
   if (_timer) {
     clearInterval(_timer);
     _timer = null;
+    try {
+      const { markStopped, WORKER_NAMES } = require('./workerHeartbeat');
+      markStopped(WORKER_NAMES.REMINDER_SCHEDULER);
+    } catch (_) { /* non-critical */ }
     logger.info('Stopped');
   }
 }
