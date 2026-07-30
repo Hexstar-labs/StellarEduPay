@@ -56,14 +56,18 @@ export default function PaymentForm() {
   const [loading, setLoading]                 = useState(false);
   const [copied, setCopied]                   = useState(null);
   const [hasDeletedPayments, setHasDeletedPayments] = useState(false);
-  const [disputingTx, setDisputingTx]         = useState(null);
+  const [balanceError, setBalanceError]         = useState(false);
+  const [disputingTx, setDisputingTx]           = useState(null);
   const [disputedTxs, setDisputedTxs]         = useState(new Set());
   // #1118 — wallets that cannot send free-text memos can switch the QR code to
   // MEMO_ID or MEMO_HASH; all three decode back to the same payment reference.
   const [memoType, setMemoType]               = useState("MEMO_TEXT");
-  const errorRef  = useRef(null);
+  const errorRef    = useRef(null);
   const debounceRef = useRef(null);
   const qrWrapperRef = useRef(null);
+  // Holds the AbortController for the in-flight lookup so a superseded request
+  // can be cancelled before the next one starts (race-condition fix).
+  const lookupAbortRef = useRef(null);
 
   function handleStudentIdChange(e) {
     const value = e.target.value;
@@ -72,40 +76,76 @@ export default function PaymentForm() {
   }
 
   useEffect(() => {
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      // Cancel any in-flight lookup when the component unmounts.
+      lookupAbortRef.current?.abort();
+    };
   }, []);
 
   const lookupStudent = useCallback(async (id) => {
     if (!id.trim()) return;
+
+    // Cancel the previous in-flight request (if any) before starting a new one.
+    lookupAbortRef.current?.abort();
+    const controller = new AbortController();
+    lookupAbortRef.current = controller;
+
     setError("");
     setStudent(null);
     setInstructions(null);
     setPayments(null);
     setHasDeletedPayments(false);
+    setBalanceError(false);
     setLoading(true);
     setPaymentsLoading(true);
     try {
+      const signal = controller.signal;
       const [stuRes, instrRes, payRes, balRes] = await Promise.all([
-        getStudent(id),
-        getPaymentInstructions(id),
-        getStudentPayments(id),
-        getStudentBalance(id).catch(() => null),
+        getStudent(id, { signal }),
+        getPaymentInstructions(id, { signal }),
+        getStudentPayments(id, { signal }),
+        getStudentBalance(id, { signal }).catch((err) => {
+          // Propagate abort so the outer catch can detect it; surface other errors.
+          if (err?.name === "CanceledError" || err?.code === "ERR_CANCELED") throw err;
+          setBalanceError(true);
+          return null;
+        }),
       ]);
       setStudent(stuRes.data);
       setInstructions(instrRes.data);
       setPayments(payRes.data?.payments ?? payRes.data ?? []);
       setHasDeletedPayments(balRes?.data?.hasDeletedPayments === true);
     } catch (err) {
+      // Axios names aborted requests "CanceledError" (axios ≥ 1.x) with code
+      // "ERR_CANCELED".  Silently ignore them — a newer request is already
+      // in flight and will update the UI when it resolves.
+      if (err?.name === "CanceledError" || err?.code === "ERR_CANCELED") return;
       setError(
         getErrorMessage(err.response?.data?.code, err.response?.data?.error) ||
         "Student not found. Please check the ID and try again."
       );
       errorRef.current?.focus();
     } finally {
-      setLoading(false);
-      setPaymentsLoading(false);
+      // Only clear loading state when *this* controller is still the current
+      // one (i.e. it hasn't been superseded by a newer lookup).
+      if (lookupAbortRef.current === controller) {
+        setLoading(false);
+        setPaymentsLoading(false);
+      }
     }
   }, []);
+
+  const retryBalance = useCallback(async () => {
+    if (!studentId.trim()) return;
+    setBalanceError(false);
+    try {
+      const balRes = await getStudentBalance(studentId);
+      setHasDeletedPayments(balRes?.data?.hasDeletedPayments === true);
+    } catch {
+      setBalanceError(true);
+    }
+  }, [studentId]);
 
   async function copy(text, key) {
     await navigator.clipboard.writeText(text).catch(() => {});
@@ -162,7 +202,16 @@ export default function PaymentForm() {
             Enter your student ID to get payment instructions.
           </p>
 
-          <form onSubmit={(e) => { e.preventDefault(); lookupStudent(studentId); }}>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            // #1215 — cancel any pending debounce timer so that submitting the
+            // form immediately after typing doesn't fire a duplicate lookup.
+            if (debounceRef.current) {
+              clearTimeout(debounceRef.current);
+              debounceRef.current = null;
+            }
+            lookupStudent(studentId);
+          }}>
             <label className="pf-section-label" htmlFor="sid">Student ID</label>
             <div className="pf-id-input-wrap">
               <span className="pf-search-icon"><IconSearch size={15} /></span>
@@ -205,6 +254,22 @@ export default function PaymentForm() {
                 <div role="alert" className="alert alert-warning" style={{ marginBottom: "1rem", fontSize: "0.8125rem" }}>
                   <IconAlertTriangle size={14} />
                   This student has deleted payment records not included in the balance shown.
+                </div>
+              )}
+              {balanceError && (
+                <div role="alert" className="alert alert-warning" style={{ marginBottom: "1rem", fontSize: "0.8125rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                    <IconAlertTriangle size={14} />
+                    Balance information could not be loaded.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={retryBalance}
+                    className="btn btn-sm btn-ghost"
+                    style={{ flexShrink: 0 }}
+                  >
+                    Retry
+                  </button>
                 </div>
               )}
 

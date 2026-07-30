@@ -21,7 +21,13 @@ function generateReceiptSignature(receipt) {
 function verifyReceiptSignature(receipt) {
   if (!receipt.signature) return false;
   const expectedSignature = generateReceiptSignature(receipt);
-  return crypto.timingSafeEqual(Buffer.from(receipt.signature), Buffer.from(expectedSignature));
+  const actual   = Buffer.from(receipt.signature);
+  const expected = Buffer.from(expectedSignature);
+  // crypto.timingSafeEqual throws a RangeError when the two buffers have
+  // different lengths.  A length mismatch is itself proof of a bad signature,
+  // so we treat it as verification failure rather than letting it propagate.
+  if (actual.length !== expected.length) return false;
+  return crypto.timingSafeEqual(actual, expected);
 }
 
 /**

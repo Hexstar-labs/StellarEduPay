@@ -64,15 +64,51 @@ fi
 
 echo "[backup] Backup created: ${BACKUP_PATH}.gz ($(du -sh "${BACKUP_PATH}.gz" | cut -f1))"
 
-# Verify backup integrity with mongorestore --dryRun
+# Verify backup integrity with mongorestore --dryRun.
+#
+# Exit-code-based check: we rely solely on mongorestore's exit status (0 =
+# success, non-zero = failure), not on grepping its human-readable log output.
+# The previous grep -q "done" approach was fragile — a version of mongorestore
+# that changed its completion wording would silently invert the check's
+# result, potentially deleting good backups or accepting corrupt ones. See
+# issue #1105.
+#
+# We run mongorestore in a subshell so that set -e does not abort the script
+# before we can capture the exit code and call send_alert.
 echo "[backup] Verifying backup integrity..."
-if ! mongorestore --archive="${BACKUP_PATH}.gz" --gzip --dryRun 2>&1 | grep -q "done"; then
-  send_alert "Backup verification failed — mongorestore --dryRun did not complete successfully"
+mongorestore_output=$(mongorestore --archive="${BACKUP_PATH}.gz" --gzip --dryRun 2>&1)
+mongorestore_exit=$?
+if [[ "${mongorestore_exit}" -ne 0 ]]; then
+  echo "[backup] mongorestore --dryRun output:" >&2
+  echo "${mongorestore_output}" >&2
+  send_alert "Backup verification failed — mongorestore --dryRun exited with code ${mongorestore_exit}"
   rm -f "${BACKUP_PATH}.gz"
   exit 1
 fi
 
 echo "[backup] ✓ Backup verified successfully"
+
+# Notify the backend so backup_last_success_timestamp_seconds stays current.
+# BACKEND_INTERNAL_URL defaults to http://backend:5000 (the service name on the
+# backend-db Docker network). BACKUP_NOTIFY_TOKEN must match the value set in
+# the backend's environment. If either is unset the notification is skipped and
+# a warning is emitted — the backup itself still succeeds.
+BACKEND_INTERNAL_URL="${BACKEND_INTERNAL_URL:-http://backend:5000}"
+BACKUP_NOTIFY_TOKEN="${BACKUP_NOTIFY_TOKEN:-}"
+if [[ -n "${BACKUP_NOTIFY_TOKEN}" ]]; then
+  if ! curl -sf -X POST "${BACKEND_INTERNAL_URL}/api/internal/backup-heartbeat" \
+      -H "Authorization: Bearer ${BACKUP_NOTIFY_TOKEN}" \
+      -H "Content-Type: application/json" \
+      --max-time 10 \
+      --silent \
+      --show-error > /dev/null 2>&1; then
+    echo "[backup] WARNING: heartbeat notification to ${BACKEND_INTERNAL_URL} failed (metric may be stale)" >&2
+  else
+    echo "[backup] Heartbeat sent to ${BACKEND_INTERNAL_URL}"
+  fi
+else
+  echo "[backup] WARNING: BACKUP_NOTIFY_TOKEN is not set — backup_last_success_timestamp_seconds will not be updated" >&2
+fi
 
 # Remove backups older than RETAIN_DAYS
 PRUNED=$(find "${BACKUP_DIR}" -name "*.gz" -mtime "+${RETAIN_DAYS}" -delete -print | wc -l)

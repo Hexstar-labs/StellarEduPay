@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  - name: "StellarEduPay Dashboards"
+    orgId: 1
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      # Path inside the Grafana container where dashboards are mounted.
+      # Matches the volume mount added in docker-compose.monitoring.yml.
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

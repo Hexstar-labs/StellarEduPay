@@ -47,7 +47,13 @@ export default class ErrorBoundary extends Component {
               Reload page
             </button>
             <button
-              onClick={() => { window.history.back(); this.setState({ hasError: false, error: null }); }}
+              onClick={() => {
+                const onNavigated = () => {
+                  this.setState({ hasError: false, error: null });
+                };
+                window.addEventListener("popstate", onNavigated, { once: true });
+                window.history.back();
+              }}
               style={{
                 padding: "0.5rem 1.25rem",
                 borderRadius: "8px",

@@ -15,13 +15,17 @@ const outboxSchema = new mongoose.Schema(
 
     retryCount:     { type: Number, default: 0 },
     lastError:      { type: String, default: null },
+
+    deadLettered:       { type: Boolean, default: false, index: true },
+    deadLetteredAt:     { type: Date, default: null },
+    deadLetterReason:   { type: String, default: null },
   },
   {
     timestamps: true,
   }
 );
 
-outboxSchema.index({ processed: 1, createdAt: 1 });
+outboxSchema.index({ processed: 1, deadLettered: 1, createdAt: 1 });
 outboxSchema.index({ eventType: 1, processed: 1 });
 
 module.exports = mongoose.model('Outbox', outboxSchema);

@@ -37,7 +37,6 @@ Every payment **must** include a **memo** — a short text identifier that maps 
 
 - Students pay to the school's Stellar wallet address
 - The memo field contains the **student ID** (e.g., `"STU-001"`)
-- Memos are **encrypted** using `decryptMemo()` for privacy
 - Memo collision detection prevents payments from being misattributed
 
 ```javascript
@@ -45,7 +44,7 @@ const rawMemo = tx.memo ? tx.memo.trim() : null;
 if (!rawMemo) {
   throw Object.assign(new Error('Missing memo'), { code: 'MISSING_MEMO' });
 }
-const memo = decryptMemo(rawMemo);
+const memo = rawMemo;
 ```
 
 ### Transaction Flow
@@ -97,12 +96,12 @@ async function verifyTransaction(txHash, walletAddress) {
     throw Object.assign(new Error('Transaction failed'), { code: 'TX_FAILED' });
   }
 
-  // 3. Extract and decrypt memo
+  // 3. Extract memo
   const rawMemo = tx.memo ? tx.memo.trim() : null;
   if (!rawMemo) {
     throw Object.assign(new Error('Missing memo'), { code: 'MISSING_MEMO' });
   }
-  const memo = decryptMemo(rawMemo);
+  const memo = rawMemo;
 
   // 4. Find payment operation targeting school wallet
   const ops = await tx.operations();
@@ -313,11 +312,10 @@ const tx = await withStellarRetry(
 
 ## Security Features
 
-1. **Memo encryption** — `utils/memoEncryption.js` hides student IDs on-chain
-2. **Source account validation** — blacklist/whitelist/new-sender limits (`SourceValidationRule` model)
-3. **Memo collision detection** — prevents payment misattribution
-4. **Abnormal pattern detection** — flags unusual payment amounts or frequencies
-5. **Duplicate tx prevention** — `DUPLICATE_TX` error on re-submission
+1. **Source account validation** — blacklist/whitelist/new-sender limits (`SourceValidationRule` model)
+2. **Memo collision detection** — prevents payment misattribution
+3. **Abnormal pattern detection** — flags unusual payment amounts or frequencies
+4. **Duplicate tx prevention** — `DUPLICATE_TX` error on re-submission
 6. **Amount validation** — `validatePaymentAmount()` checks for negative/zero amounts
 
 ---

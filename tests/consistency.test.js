@@ -59,6 +59,62 @@ beforeEach(() => {
 });
 
 describe('checkConsistency — multi-school', () => {
+  test('a Horizon failure for one school does not prevent results from other schools — #1196', async () => {
+    // SCH-A will throw a simulated Horizon error; SCH-B should still complete.
+    mockSchoolFind.mockResolvedValue([
+      { schoolId: 'SCH-A', stellarAddress: 'GWALLET_A' },
+      { schoolId: 'SCH-B', stellarAddress: 'GWALLET_B' },
+    ]);
+
+    // GWALLET_A is NOT in mockChainTxsByWallet, so the Stellar mock returns [].
+    // We override the mock for GWALLET_A to throw instead.
+    const originalTransactions = jest.requireMock('../backend/src/config/stellarConfig').server.transactions;
+    jest.requireMock('../backend/src/config/stellarConfig').server.transactions = () => ({
+      forAccount: (wallet) => ({
+        order: () => ({
+          limit: () => ({
+            call: async () => {
+              if (wallet === 'GWALLET_A') throw new Error('Simulated Horizon timeout');
+              return { records: mockChainTxsByWallet[wallet] || [] };
+            },
+          }),
+        }),
+      }),
+    });
+
+    mockChainTxsByWallet['GWALLET_B'] = [makeChainTx('hashB1', 'STU002', 300, 'GWALLET_B')];
+
+    mockFind.mockImplementation(({ schoolId }) => {
+      if (schoolId === 'SCH-A') return Promise.resolve([{ txHash: 'hashA1', studentId: 'STU001', amount: 250 }]);
+      if (schoolId === 'SCH-B') return Promise.resolve([{ txHash: 'hashB1', studentId: 'STU002', amount: 300 }]);
+      return Promise.resolve([]);
+    });
+
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const report = await checkConsistency();
+
+    // Restore the original mock after this test.
+    jest.requireMock('../backend/src/config/stellarConfig').server.transactions = originalTransactions;
+    errorSpy.mockRestore();
+
+    // Both schools should appear in bySchool results.
+    expect(report.schoolsChecked).toBe(2);
+    expect(report.bySchool).toHaveLength(2);
+
+    const schA = report.bySchool.find((s) => s.schoolId === 'SCH-A');
+    const schB = report.bySchool.find((s) => s.schoolId === 'SCH-B');
+
+    // SCH-A failed — it should surface an error field, not crash the whole run.
+    expect(schA).toBeDefined();
+    expect(schA.error).toBeDefined();
+
+    // SCH-B succeeded and should have recorded its results normally.
+    expect(schB).toBeDefined();
+    expect(schB.mismatchCount).toBe(0);
+    expect(schB.totalDbPayments).toBe(1);
+  });
+
   test('checks each school wallet independently', async () => {
     mockSchoolFind.mockResolvedValue([
       { schoolId: 'SCH-A', stellarAddress: 'GWALLET_A' },

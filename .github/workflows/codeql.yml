@@ -1,0 +1,63 @@
+name: CodeQL SAST
+
+# Runs on every pull request and on a daily schedule for the default branch.
+# Free for public repositories via GitHub's native CodeQL analysis.
+#
+# Coverage: JavaScript/TypeScript query pack across the entire repo
+# (backend Express/Node source + frontend Next.js/React source).
+#
+# Findings triage: follow the same severity process documented for dependency
+# vulnerabilities in docs/dependency-triage.md — high/critical findings must be
+# addressed before merge; moderate findings should be triaged within 30 days.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Daily at 03:17 UTC — staggered to avoid peak-hour GitHub runner contention.
+    - cron: '17 3 * * *'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  analyze:
+    name: CodeQL analysis (JavaScript / TypeScript)
+    runs-on: ubuntu-latest
+
+    permissions:
+      # Required to upload SARIF results to the Security tab.
+      security-events: write
+      # Required to fetch the repository contents.
+      contents: read
+      # Required for private repos; no-op for public repos.
+      actions: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # Initialise the CodeQL tools and select the JavaScript/TypeScript query suite.
+      # The "security-and-quality" suite runs the full set of security queries plus
+      # quality queries (unused code, dead branches, etc.).
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+
+      # CodeQL's JavaScript/TypeScript extractor does not require a build step —
+      # it analyses source files directly. The autobuild step is included here
+      # as a no-op placeholder; it is safe to leave in place if build-time
+      # analysis is ever added for a compiled language.
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:javascript-typescript'
+          # Upload results to the Security → Code scanning tab.
+          upload: true

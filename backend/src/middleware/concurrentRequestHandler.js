@@ -406,6 +406,8 @@ function createConcurrentRequestMiddleware(options = {}) {
           await requestQueue.enqueue(async () => {
             return new Promise((resolve) => {
               req.queueDone = resolve;
+              res.on('finish', resolve);
+              res.on('close', resolve);
               next();
             });
           }, priority, timeoutMs);

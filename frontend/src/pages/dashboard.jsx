@@ -3,6 +3,9 @@ import SyncButton from "../components/SyncButton";
 import ErrorBoundary from "../components/ErrorBoundary";
 import StudentForm from "../components/StudentForm";
 import PageHero, { StatCard } from "../components/PageHero";
+import SseDegradedBanner from "../components/SseDegradedBanner";
+import RequireAdmin from "../components/RequireAdmin";
+import { usePaymentEvents } from "../hooks/usePaymentEvents";
 import { getSyncStatus, getPaymentSummary, getStudents, getStudent } from "../services/api";
 import {
   IconUsers, IconCheck, IconAlertTriangle, IconDollarSign,
@@ -27,7 +30,7 @@ const STATUS_BADGE = {
   unpaid:  { cls: "badge badge-danger",  label: "Unpaid" },
 };
 
-export default function Dashboard() {
+function Dashboard() {
   const [lastSyncAt, setLastSyncAt]           = useState(null);
   const [syncMsg, setSyncMsg]                 = useState(null);
   const [summary, setSummary]                 = useState(null);
@@ -46,8 +49,22 @@ export default function Dashboard() {
   const [editingStudent, setEditingStudent]   = useState(null);
   const [editingStudentData, setEditingStudentData] = useState(null);
 
+  // Real-time SSE — surfaces degraded/reconnecting/failed state (Issues #1054, #1078).
+  const { degraded, connectionStatus } = usePaymentEvents({
+    onEvent: (type) => {
+      // Refresh summary/students whenever a payment or dispute event arrives.
+      if (type === 'payment' || type.startsWith('dispute')) {
+        fetchSummary();
+        fetchStudents(page, debouncedSearch, statusFilter, classFilter);
+      }
+    },
+  });
+
   const searchDebounceRef = useRef(null);
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  // Holds the AbortController for the most-recent fetchStudents call so
+  // superseded (stale) requests can be cancelled before the next one starts.
+  const studentsAbortRef = useRef(null);
 
   useEffect(() => {
     clearTimeout(searchDebounceRef.current);
@@ -65,16 +82,30 @@ export default function Dashboard() {
   }, []);
 
   const fetchStudents = useCallback((p, srch, st, cls) => {
+    // Cancel any in-flight student fetch before issuing a new one.
+    studentsAbortRef.current?.abort();
+    const controller = new AbortController();
+    studentsAbortRef.current = controller;
+
     setStudentsLoading(true);
     setStudentsError(null);
-    getStudents(p, PAGE_SIZE, { search: srch, status: st, className: cls })
+    getStudents(p, PAGE_SIZE, { search: srch, status: st, className: cls }, { signal: controller.signal })
       .then(({ data }) => {
         setStudents(data.students);
         setPages(data.pages || 1);
         setTotal(data.total || 0);
       })
-      .catch(() => setStudentsError("Could not load student list."))
-      .finally(() => setStudentsLoading(false));
+      .catch((err) => {
+        // Silently ignore aborted (superseded) requests.
+        if (err?.name === "CanceledError" || err?.code === "ERR_CANCELED") return;
+        setStudentsError("Could not load student list.");
+      })
+      .finally(() => {
+        // Only clear loading when this controller is still the current one.
+        if (studentsAbortRef.current === controller) {
+          setStudentsLoading(false);
+        }
+      });
   }, []);
 
   useEffect(() => {
@@ -157,8 +188,8 @@ export default function Dashboard() {
 
   return (
     <>
-      <style>{`
-        @keyframes dashFadeUp {
+      <SseDegradedBanner degraded={degraded} connectionStatus={connectionStatus} />
+      <style>{`        @keyframes dashFadeUp {
           from { opacity: 0; transform: translateY(10px); }
           to   { opacity: 1; transform: translateY(0); }
         }
@@ -481,5 +512,13 @@ export default function Dashboard() {
         />
       )}
     </>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <RequireAdmin>
+      <Dashboard />
+    </RequireAdmin>
   );
 }

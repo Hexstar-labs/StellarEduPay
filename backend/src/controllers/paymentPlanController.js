@@ -2,7 +2,7 @@
 
 const PaymentPlan = require('../models/paymentPlanModel');
 const Student = require('../models/studentModel');
-const { logAudit } = require('./auditService');
+const { logAudit } = require('../services/auditService');
 
 async function createPaymentPlan(req, res, next) {
   try {

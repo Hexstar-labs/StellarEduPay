@@ -36,6 +36,38 @@ Triage payment ID, tenant ID, user ID, idempotency key, amount, asset, destinati
 
 Procedure: if a transaction hash exists, query Stellar/Horizon directly. If confirmed, update payment state with an audit reason. If failed, mark failed with the failure reason. If no hash exists and no transfer occurred, retry from queued state. If state is ambiguous, keep manual-review and do not retry automatically.
 
+## Secret Provisioning
+
+Before deploying the backend for the first time in any environment, provision
+the `stellaredupay` Kubernetes Secret using the scripted process below. Never
+use a hand-typed `kubectl create secret` command — the script validates inputs,
+is idempotent, and emits an audit trail for your change-management log.
+
+**Checklist — run before every new environment or after a credential reset:**
+
+1. Generate values for all required secrets (see script header for generation
+   commands): `JWT_SECRET`, `MONGO_URI`, and (for production) `SIGNER_MASTER_KEY`.
+2. Verify you are targeting the correct cluster context:
+   `kubectl config current-context`
+3. Run the provisioning script:
+   ```sh
+   JWT_SECRET=<value> MONGO_URI=<value> SIGNER_MASTER_KEY=<value> \
+     NAMESPACE=<namespace> \
+     ./scripts/provision-k8s-secrets.sh
+   ```
+4. Record the script's audit output (context, operator, timestamp) in your
+   incident or change-management log.
+5. Deploy via the environment overlay — not the base manifest directly:
+   ```sh
+   kubectl apply -k deploy/k8s/overlays/mainnet   # production
+   kubectl apply -k deploy/k8s/overlays/testnet   # staging
+   ```
+6. Verify the backend pods reach `Running` state and the `/health` endpoint
+   returns `{"status":"healthy"}`.
+
+The script (`scripts/provision-k8s-secrets.sh`) uses `--dry-run=client | apply`
+so it is safe to re-run; it patches an existing secret without error.
+
 ## Key Rotation
 
 Rotate JWT secrets, webhook secrets, database credentials, queue credentials, deployment tokens, and Stellar signing credentials when compromise is suspected, operator membership changes, or the scheduled interval expires.

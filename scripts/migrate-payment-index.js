@@ -6,10 +6,13 @@
  *
  * Replaces the single-field unique index on txHash with a compound unique
  * index on { schoolId, txHash }, enabling per-school uniqueness enforcement
- * and faster school-scoped payment queries.
+ * and faster school-scoped payment queries. Also (re)creates the sparse
+ * unique index on txHash alone, used for fast cross-school duplicate
+ * detection while excluding manually created records with a null txHash —
+ * see backend/src/models/paymentModel.js.
  *
  * Safe to re-run — drops the old index only if it exists, then creates the
- * new one with createIndex (no-op if it already exists).
+ * new ones with createIndex (no-op if they already exist).
  *
  * Usage:
  *   MONGO_URI=mongodb://... node scripts/migrate-payment-index.js
@@ -47,6 +50,12 @@ async function run() {
   // Create the new compound unique index
   await col.createIndex({ schoolId: 1, txHash: 1 }, { unique: true, background: true });
   console.log('Created compound unique index { schoolId: 1, txHash: 1 }');
+
+  // Create the sparse unique index on txHash alone for fast cross-school
+  // duplicate detection. sparse: true excludes documents where txHash is
+  // null (manually created records), matching backend/src/models/paymentModel.js.
+  await col.createIndex({ txHash: 1 }, { unique: true, sparse: true, background: true });
+  console.log('Created sparse unique index { txHash: 1 }');
 
   await client.close();
   console.log('Migration complete.');

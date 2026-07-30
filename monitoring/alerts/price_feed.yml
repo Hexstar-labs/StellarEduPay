@@ -19,6 +19,7 @@ groups:
             cached (stale) values. Check CoinGecko / Coinbase status and
             StellarEduPay logs.
           runbook_url: "https://github.com/manuelusman73-png/StellarEduPay/blob/main/docs/runbooks/price-feed-staleness.md"
+          dashboard_url: "http://localhost:3001/d/stellaredupay-price-feed/stellaredupay-price-feed-health"
 
       # ── Critical: stale flag set and no recovery after 15 minutes ────────
       # price_feed_stale{provider} is set to 1 only when the
@@ -38,6 +39,7 @@ groups:
             required. Last successful fetch timestamp:
             {{ query "price_feed_last_success_timestamp{provider=\"" }}{{ $labels.provider }}{{ query "\"}" | first | value | humanizeTimestamp }}.
           runbook_url: "https://github.com/manuelusman73-png/StellarEduPay/blob/main/docs/runbooks/price-feed-staleness.md"
+          dashboard_url: "http://localhost:3001/d/stellaredupay-price-feed/stellaredupay-price-feed-health"
 
       # ── Info: last-success timestamp has not advanced in 10 minutes ──────
       # Catches the edge case where the metric exists but is frozen (process
@@ -53,3 +55,4 @@ groups:
             {{ $labels.provider }} has not produced a successful price feed fetch
             for {{ $value | humanizeDuration }}. Fiat display may degrade soon.
           runbook_url: "https://github.com/manuelusman73-png/StellarEduPay/blob/main/docs/runbooks/price-feed-staleness.md"
+          dashboard_url: "http://localhost:3001/d/stellaredupay-price-feed/stellaredupay-price-feed-health"

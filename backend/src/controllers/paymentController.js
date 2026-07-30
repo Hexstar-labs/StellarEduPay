@@ -175,6 +175,9 @@ async function createPaymentIntent(req, res, next) {
       categoryInfo,
     });
   } catch (err) {
+    if (err.code === 11000) {
+      return res.status(409).json({ error: 'A payment intent with that memo already exists for this school', code: 'DUPLICATE_PAYMENT_INTENT' });
+    }
     next(err);
   }
 }

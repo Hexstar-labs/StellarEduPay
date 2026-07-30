@@ -945,7 +945,9 @@ async function exportStudents(req, res, next) {
 
     res.write(columns.join(',') + '\n');
 
-    const cursor = Student.find(filter).sort({ createdAt: -1 }).cursor();
+    const query = Student.find(filter).sort({ createdAt: -1 });
+    if (includeDeleted) query.includeDeleted();
+    const cursor = query.cursor();
 
     cursor.on('data', (doc) => {
       const row = columns.map((col) => {

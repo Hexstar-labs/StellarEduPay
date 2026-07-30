@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 
 /**
  * Regression test for a ReferenceError in the idempotency middleware's 5xx
@@ -15,12 +15,17 @@
 // The middleware's module-level `logger` is created once at require time via
 // `.child(...)`; the factory must return the SAME object on every call so
 // this test's assertions observe the calls the middleware actually made.
-jest.mock('../src/utils/logger', () => {
-  const singleton = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
+jest.mock("../src/utils/logger", () => {
+  const singleton = {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
+  };
   return { child: () => singleton };
 });
 
-jest.mock('../src/services/idempotencyStore', () => ({
+jest.mock("../src/services/idempotencyStore", () => ({
   getFull: jest.fn(),
   reserve: jest.fn(),
   complete: jest.fn(),
@@ -28,13 +33,13 @@ jest.mock('../src/services/idempotencyStore', () => ({
   IN_FLIGHT_TTL_MS: 30000,
 }));
 
-jest.mock('../src/services/currencyConversionService', () => ({
+jest.mock("../src/services/currencyConversionService", () => ({
   convertToLocalCurrency: jest.fn(),
 }));
 
-const idempotency = require('../src/middleware/idempotency');
-const idempotencyStore = require('../src/services/idempotencyStore');
-const logger = require('../src/utils/logger').child();
+const idempotency = require("../src/middleware/idempotency");
+const idempotencyStore = require("../src/services/idempotencyStore");
+const logger = require("../src/utils/logger").child();
 
 function makeRes() {
   const res = {};
@@ -56,28 +61,29 @@ async function flushPromises() {
   }
 }
 
-describe('idempotency middleware — 5xx release-failure path', () => {
+describe("idempotency middleware — 5xx release-failure path", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     idempotencyStore.getFull.mockResolvedValue(null);
     idempotencyStore.reserve.mockResolvedValue({ reserved: true });
   });
 
-  it('does not throw a ReferenceError, and does not produce an unhandled rejection, when release() fails on a 5xx response', async () => {
-    idempotencyStore.release.mockRejectedValue(new Error('mongo unavailable'));
+  it("does not throw a ReferenceError, and does not produce an unhandled rejection, when release() fails on a 5xx response", async () => {
+    idempotencyStore.release.mockRejectedValue(new Error("mongo unavailable"));
 
     const unhandled = jest.fn();
-    process.on('unhandledRejection', unhandled);
+    process.on("unhandledRejection", unhandled);
 
     const req = {
-      headers: { 'idempotency-key': 'client-key-1' },
-      path: '/api/payments/verify',
-      body: { txHash: 'abc' },
+      headers: { "idempotency-key": "client-key-1" },
+      path: "/api/payments/verify",
+      body: { txHash: "abc" },
     };
     const res = makeRes();
     const next = jest.fn();
+    const middleware = idempotency();
 
-    idempotency(req, res, next);
+    middleware(req, res, next);
     await flushPromises();
 
     expect(next).toHaveBeenCalledTimes(1);
@@ -85,7 +91,7 @@ describe('idempotency middleware — 5xx release-failure path', () => {
     // Simulate the downstream controller failing with a 5xx, as Express does:
     // res.status(500).json(...). This invokes the middleware's intercepted
     // res.json, which is where the bug lived.
-    res.status(500).json({ error: 'internal error' });
+    res.status(500).json({ error: "internal error" });
     await flushPromises();
 
     expect(idempotencyStore.release).toHaveBeenCalledWith(expect.any(String));
@@ -93,11 +99,11 @@ describe('idempotency middleware — 5xx release-failure path', () => {
     // The fixed code logs via the properly-scoped module logger instead of
     // throwing a ReferenceError from inside the .catch() callback.
     expect(logger.debug).toHaveBeenCalledWith(
-      '[Idempotency] release missed',
-      expect.objectContaining({ error: 'mongo unavailable' })
+      "[Idempotency] release missed",
+      expect.objectContaining({ error: "mongo unavailable" }),
     );
 
-    process.removeListener('unhandledRejection', unhandled);
+    process.removeListener("unhandledRejection", unhandled);
     expect(unhandled).not.toHaveBeenCalled();
   });
 });

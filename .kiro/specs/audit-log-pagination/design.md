@@ -2,9 +2,9 @@
 
 ## Overview
 
-The audit log page currently fetches all payment records in one unbounded query. This design adds a paginated `GET /api/audit-logs` endpoint backed by the existing `Payment` MongoDB model, and replaces the single-fetch frontend with an incremental "load more" pattern. Entries are served in pages of 50, the URL reflects the current page for shareability, and a count summary keeps the user oriented.
+The audit log page currently fetches all payment records in one unbounded query. This design adds a paginated `GET /api/audit-logs` endpoint backed by a dedicated `AuditLog` MongoDB model, and replaces the single-fetch frontend with an incremental "load more" pattern. Entries are served in pages of 50, the URL reflects the current page for shareability, and a count summary keeps the user oriented.
 
-No new data model is needed — the `Payment` model already contains all audit-relevant fields (`txHash`, `studentId`, `amount`, `status`, `confirmedAt`, `verifiedAt`, etc.).
+As shipped, this feature introduced a new `AuditLog` model (`backend/src/models/auditLogModel.js`), not a reuse of the existing `Payment` model. `AuditLog` carries its own fields (`schoolId`, `action`, `performedBy`, `targetId`, `targetType`, `result`, hash-chain integrity fields, etc.) and supports richer filtering (by action, target type, actor, date range) than `Payment` alone could provide. See the Data Models section below.
 
 ---
 
@@ -15,22 +15,22 @@ sequenceDiagram
     participant Browser
     participant AuditLogPage
     participant ApiService
-    participant AuditLogController
-    participant PaymentModel
+    participant AuditController
+    participant AuditLogModel
 
     Browser->>AuditLogPage: navigate to /audit-logs[?page=N]
     AuditLogPage->>ApiService: getAuditLogs({ page: 1..N, limit: 50 })
-    ApiService->>AuditLogController: GET /api/audit-logs?page=P&limit=50
-    AuditLogController->>PaymentModel: countDocuments()
-    AuditLogController->>PaymentModel: find().sort().skip().limit()
-    PaymentModel-->>AuditLogController: [Payment]
-    AuditLogController-->>ApiService: { data, total, page, limit, totalPages }
+    ApiService->>AuditController: GET /api/audit-logs?page=P&limit=50
+    AuditController->>AuditLogModel: countDocuments()
+    AuditController->>AuditLogModel: find().sort().skip().limit()
+    AuditLogModel-->>AuditController: [AuditLog]
+    AuditController-->>ApiService: { data, total, page, limit, totalPages }
     ApiService-->>AuditLogPage: response envelope
     AuditLogPage-->>Browser: render entries + "Showing X of Y" + Load More button
 
     Browser->>AuditLogPage: click "Load More"
     AuditLogPage->>ApiService: getAuditLogs({ page: currentPage+1, limit: 50 })
-    AuditLogController-->>AuditLogPage: next page envelope
+    AuditController-->>AuditLogPage: next page envelope
     AuditLogPage-->>Browser: append entries, update URL ?page=N+1
 ```
 
@@ -40,25 +40,26 @@ sequenceDiagram
 
 ### Backend
 
-#### `backend/src/controllers/auditLogController.js` (new)
+#### `backend/src/controllers/auditController.js` (new)
 
 ```js
-// GET /api/audit-logs?page=1&limit=50
-async function getAuditLogs(req, res, next)
+// GET /api/audit-logs?page=1&limit=50&action=&targetType=&performedBy=&startDate=&endDate=
+async function getAuditLogsEndpoint(req, res, next)
 ```
 
-- Parses and validates `page` (default 1) and `limit` (default 50, max 100) from `req.query`.
-- Returns `400 VALIDATION_ERROR` for non-positive-integer values.
-- Runs `Payment.countDocuments()` and `Payment.find().sort({ confirmedAt: -1 }).skip(skip).limit(limit)` in parallel via `Promise.all`.
-- Returns the envelope: `{ data, total, page, limit, totalPages }`.
+- Parses `page` (default 1), `limit` (default 50, max 200), plus optional `action`, `targetType`, `performedBy`, `result`, `startDate`/`endDate`, and `cursor` filters from `req.query`.
+- Delegates to `getAuditLogs()` in `backend/src/services/auditService.js`, which queries the `AuditLog` model.
+- Returns the envelope: `{ logs, total, page, limit, pages, nextCursor }`.
 
-#### `backend/src/routes/auditLogRoutes.js` (new)
+#### `backend/src/routes/auditRoutes.js` (new)
 
 ```js
-router.get('/', getAuditLogs);
+router.get('/',              getAuditLogsEndpoint);
+router.get('/recent',        getRecentAuditLogsEndpoint);
+router.get('/verify-chain',  verifyChainEndpoint);
 ```
 
-Mounted at `/api/audit-logs` in `backend/src/app.js`.
+Intended to be mounted at `/api/audit-logs` in `backend/src/app.js` (tracked separately: the route is not currently mounted there).
 
 ### Frontend
 
@@ -72,7 +73,7 @@ export const getAuditLogs = ({ page = 1, limit = 50 } = {}) =>
 #### `frontend/src/pages/audit-logs.jsx` (new)
 
 State:
-- `entries` — accumulated array of loaded Payment records
+- `entries` — accumulated array of loaded AuditLog records
 - `page` — highest page fetched so far
 - `total` — Total_Count from last response
 - `totalPages` — from last response
@@ -89,20 +90,24 @@ Behaviour:
 
 ## Data Models
 
-No new models. The existing `Payment` model fields used for the audit log display:
+A dedicated `AuditLog` model (`backend/src/models/auditLogModel.js`) was introduced for this feature:
 
 | Field | Type | Notes |
 |---|---|---|
-| `txHash` | String | Unique on-chain reference |
-| `studentId` | String | Student identifier |
-| `amount` | Number | Payment amount |
-| `status` | String | `pending` / `confirmed` / `failed` |
-| `feeValidationStatus` | String | `valid` / `underpaid` / `overpaid` / `unknown` |
-| `confirmedAt` | Date | Sort key (descending) |
-| `verifiedAt` | Date | When verified via API |
-| `createdAt` | Date | Auto-managed by Mongoose |
+| `schoolId` | String | Tenant scope, required, indexed |
+| `action` | String | e.g. action performed, required, indexed |
+| `performedBy` | String | Actor (admin user), required |
+| `targetId` | String | ID of the affected entity, required, indexed |
+| `targetType` | String | `student` / `payment` / `fee` / `school`, required, indexed |
+| `details` | Mixed | Free-form structured detail, default `{}` |
+| `result` | String | `success` / `failure`, default `success` |
+| `errorMessage` | String | Set when `result` is `failure` |
+| `ipAddress` / `userAgent` | String | Request metadata |
+| `prevHash` / `entryHash` | String | Hash-chain integrity fields (#885) — tamper detection via HMAC-SHA256 chaining |
+| `archived` | Boolean | Set by the archive job; records are never hard-deleted |
+| `createdAt` / `updatedAt` | Date | Auto-managed by Mongoose (`timestamps: true`) |
 
-The `confirmedAt` field already has a MongoDB index (defined in `paymentModel.js`), so the sort + skip + limit query is efficient.
+Compound indexes exist for the common query shapes: `{ schoolId, action, createdAt }`, `{ schoolId, targetType, createdAt }`, `{ schoolId, performedBy, createdAt }`, and `{ schoolId, createdAt }`, so the filtered sort + skip + limit query in `auditService.getAuditLogs()` is efficient. There is deliberately no TTL index — audit records are retained for compliance and offloaded via the archive flag instead of deletion.
 
 ---
 

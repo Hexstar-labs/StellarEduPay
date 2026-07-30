@@ -92,7 +92,7 @@ async function _notifyDisputeChange(schoolId, eventName, disputeDoc) {
   // Route through the dispute.* notification helpers so the payload shape stays
   // consistent with the other webhook events (mirrors notifyPaymentConfirmed/…).
   try {
-    const school = await School.findOne({ schoolId }, { webhookUrl: 1, webhookSecret: 1 }).lean();
+    const school = await School.findOne({ schoolId }, { webhookUrl: 1, webhookSecret: 1 });
     if (school && school.webhookUrl) {
       const secret = school.webhookSecret || null;
       if (eventName === 'dispute.created') {
@@ -137,9 +137,15 @@ async function _syncPaymentStatus(schoolId, txHash, newDisputeStatus) {
 
   const previousStatus = payment.status;
   if (previousStatus === targetPaymentStatus) {
-    const err = new Error(`Payment status transition from ${previousStatus} to ${targetPaymentStatus} is not allowed`);
-    err.code = 'INVALID_TRANSITION';
-    throw err;
+    // Idempotent no-op: payment is already in the target state.
+    // This happens when two dispute statuses (e.g. 'open' and 'under_review')
+    // map to the same payment status (DISPUTED).  Moving between them is a
+    // valid dispute-state-machine transition and must not be treated as an
+    // error — the payment side simply has nothing to do.
+    logger.info('Payment status already at target; skipping sync', {
+      schoolId, txHash, disputeStatus: newDisputeStatus, paymentStatus: previousStatus,
+    });
+    return;
   }
 
   // Dispute resolution is an authoritative decision equivalent to an admin

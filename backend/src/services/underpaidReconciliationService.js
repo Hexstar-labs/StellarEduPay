@@ -12,6 +12,11 @@
 const Payment = require('../models/paymentModel');
 const Student = require('../models/studentModel');
 const logger = require('../utils/logger');
+const lock = require('./distributedLock');
+
+// Shares the same TTL convention as the other callers of the per-student
+// balance lock (paymentController.verifyPayment, stellarService.syncPaymentsForSchool).
+const STUDENT_BALANCE_LOCK_TTL_MS = parseInt(process.env.STUDENT_BALANCE_LOCK_TTL_MS || '15000', 10);
 
 /**
  * Apply partial credit to an underpaid payment
@@ -45,47 +50,66 @@ async function applyPartialCredit(paymentId, creditAmount, creditAppliedBy, scho
     );
   }
 
-  // Ensure credit doesn't exceed the shortfall
-  const student = await Student.findOne({
-    schoolId: payment.schoolId,
-    studentId: payment.studentId,
-  });
-
-  if (!student) {
+  // Guard the read-modify-write of the student's balance with the same
+  // per-student distributed lock used by verifyPayment/syncPaymentsForSchool
+  // (#1201), so a concurrent payment confirmation for this student can't
+  // race this read-modify-write and silently lose one of the two updates.
+  const studentLockKey = lock.studentBalanceLockKey(payment.schoolId, payment.studentId);
+  const studentLockInfo = await lock.acquire(studentLockKey, STUDENT_BALANCE_LOCK_TTL_MS);
+  if (!studentLockInfo) {
     throw new Error(
-      `Student ${payment.studentId} not found in school ${payment.schoolId}`
+      `Could not acquire balance lock for student ${payment.studentId} — another update is in progress. Please retry.`
     );
   }
+  const { token: studentLockToken } = studentLockInfo;
 
-  const shortfall = Math.max(0, student.feeAmount - (student.totalPaid || 0));
-  if (creditAmount > shortfall) {
-    throw new Error(
-      `Credit amount (${creditAmount}) exceeds shortfall (${shortfall}). ` +
-      'Partial credit cannot exceed the remaining fee balance.'
+  let now;
+  try {
+    // Re-read the student's balance now that the lock is held, so the shortfall
+    // check and the write below are both based on up-to-date data.
+    const student = await Student.findOne({
+      schoolId: payment.schoolId,
+      studentId: payment.studentId,
+    });
+
+    if (!student) {
+      throw new Error(
+        `Student ${payment.studentId} not found in school ${payment.schoolId}`
+      );
+    }
+
+    const shortfall = Math.max(0, student.feeAmount - (student.totalPaid || 0));
+    if (creditAmount > shortfall) {
+      throw new Error(
+        `Credit amount (${creditAmount}) exceeds shortfall (${shortfall}). ` +
+        'Partial credit cannot exceed the remaining fee balance.'
+      );
+    }
+
+    now = new Date();
+
+    // Update payment with credit information
+    payment.underpaidReconciliation.status = 'partial_credited';
+    payment.underpaidReconciliation.appliedCredit = creditAmount;
+    payment.underpaidReconciliation.creditAppliedAt = now;
+    payment.underpaidReconciliation.creditAppliedBy = creditAppliedBy;
+    await payment.save();
+
+    // Update student's cumulative balance
+    const newTotalPaid = (student.totalPaid || 0) + creditAmount;
+    const newRemainingBalance = Math.max(0, student.feeAmount - newTotalPaid);
+    await Student.findOneAndUpdate(
+      { schoolId: payment.schoolId, studentId: payment.studentId },
+      {
+        totalPaid: parseFloat(newTotalPaid.toFixed(7)),
+        remainingBalance: parseFloat(newRemainingBalance.toFixed(7)),
+        feePaid: newTotalPaid >= student.feeAmount,
+      },
+      { new: true }
     );
+  } finally {
+    await lock.release(studentLockKey, studentLockToken);
   }
-
-  const now = new Date();
-
-  // Update payment with credit information
-  payment.underpaidReconciliation.status = 'partial_credited';
-  payment.underpaidReconciliation.appliedCredit = creditAmount;
-  payment.underpaidReconciliation.creditAppliedAt = now;
-  payment.underpaidReconciliation.creditAppliedBy = creditAppliedBy;
-  await payment.save();
-
-  // Update student's cumulative balance
-  const newTotalPaid = (student.totalPaid || 0) + creditAmount;
-  const newRemainingBalance = Math.max(0, student.feeAmount - newTotalPaid);
-  await Student.findOneAndUpdate(
-    { schoolId: payment.schoolId, studentId: payment.studentId },
-    {
-      totalPaid: parseFloat(newTotalPaid.toFixed(7)),
-      remainingBalance: parseFloat(newRemainingBalance.toFixed(7)),
-      feePaid: newTotalPaid >= student.feeAmount,
-    },
-    { new: true }
-  );
 
   logger.info('[UnderpaidReconciliation] Partial credit applied', {
     paymentId: payment._id,

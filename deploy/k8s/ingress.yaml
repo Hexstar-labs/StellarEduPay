@@ -1,0 +1,35 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: stellaredupay
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          # API traffic goes directly to the backend; /api prefix is preserved
+          # so the backend's Express routes (which are all under /api/) match.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 5000
+          # All other traffic is served by the Next.js frontend.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000
+  # Uncomment and populate to terminate TLS at the Ingress:
+  # tls:
+  #   - hosts:
+  #       - your-domain.example.com
+  #     secretName: stellaredupay-tls

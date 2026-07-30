@@ -5,34 +5,59 @@ const paymentEvents = require('../events/paymentEvents');
 const logger = require('../utils/logger').child('OutboxDispatcher');
 
 const BATCH_SIZE = 100;
+const MAX_RETRIES = parseInt(process.env.OUTBOX_MAX_RETRIES, 10) || 3;
 const DISPATCH_INTERVAL_MS = parseInt(process.env.OUTBOX_DISPATCH_INTERVAL_MS, 10) || 5000;
 let _dispatchTimer = null;
 
+async function deadLetterOutboxEvent(event, retryCount, errorMessage) {
+  logger.error('Outbox event exceeded max retries', {
+    eventId: event.eventId,
+    eventType: event.eventType,
+    error: errorMessage,
+    retryCount,
+    maxRetries: MAX_RETRIES,
+  });
+
+  await Outbox.findByIdAndUpdate(event._id, {
+    retryCount,
+    lastError: errorMessage,
+    deadLettered: true,
+    deadLetteredAt: new Date(),
+    deadLetterReason: 'max_retries_exhausted',
+  });
+}
+
 async function dispatchOutboxEvents() {
   try {
-    const batch = await Outbox.find({ processed: false }).limit(BATCH_SIZE).sort({ createdAt: 1 });
+    const batch = await Outbox.find({ processed: false, deadLettered: { $ne: true } }).limit(BATCH_SIZE).sort({ createdAt: 1 });
 
     for (const event of batch) {
       try {
-        paymentEvents.emit(event.eventType, event.payload);
+        if ((event.retryCount || 0) >= MAX_RETRIES) {
+          await deadLetterOutboxEvent(event, event.retryCount || 0, event.lastError || 'Retry budget exhausted');
+          continue;
+        }
+
+        const results = await paymentEvents.asyncEmit(event.eventType, event.payload);
+
+        // If any listener failed (rejected), treat the whole dispatch as
+        // failed so the event gets retried or dead-lettered rather than
+        // being permanently marked processed with unprocessed side-effects.
+        const rejected = results.filter((r) => r.status === 'rejected');
+        if (rejected.length > 0) {
+          const messages = rejected.map((r) => r.reason?.message || String(r.reason));
+          throw new Error(`Listener(s) rejected: ${messages.join('; ')}`);
+        }
+
         await Outbox.findByIdAndUpdate(event._id, {
           processed: true,
           processedAt: new Date(),
         });
       } catch (err) {
         const retryCount = (event.retryCount || 0) + 1;
-        const maxRetries = 3;
 
-        if (retryCount >= maxRetries) {
-          logger.error('Outbox event exceeded max retries', {
-            eventId: event.eventId,
-            eventType: event.eventType,
-            error: err.message,
-          });
-          await Outbox.findByIdAndUpdate(event._id, {
-            retryCount,
-            lastError: err.message,
-          });
+        if (retryCount >= MAX_RETRIES) {
+          await deadLetterOutboxEvent(event, retryCount, err.message);
         } else {
           await Outbox.findByIdAndUpdate(event._id, {
             retryCount,

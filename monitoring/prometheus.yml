@@ -13,6 +13,7 @@ rule_files:
   - "alerts/mongodb.yml"
   - "alerts/horizon_failover.yml"
   - "alerts/queue_backpressure.yml"
+  - "alerts/backup.yml"
 
 scrape_configs:
   - job_name: stellaredupay
@@ -26,3 +27,42 @@ scrape_configs:
       # On Linux it is mapped to host-gateway via extra_hosts in docker-compose.monitoring.yml.
       - targets:
           - "host.docker.internal:5000"
+
+  # ── Infrastructure exporters ─────────────────────────────────────────────
+
+  # MongoDB metrics via percona/mongodb_exporter
+  # Covers: connection pool utilization, operation counters, replication lag,
+  # document/index stats, and WiredTiger cache pressure.
+  - job_name: mongodb
+    static_configs:
+      - targets:
+          - "mongodb_exporter:9216"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "mongodb"
+
+  # Redis metrics via oliver006/redis_exporter
+  # Covers: memory usage & fragmentation, connected clients, evictions,
+  # keyspace hit/miss ratio, and BullMQ queue key counts.
+  - job_name: redis
+    static_configs:
+      - targets:
+          - "redis_exporter:9121"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "redis"
+
+  # Host/container metrics via node_exporter
+  # Covers: CPU utilisation, memory pressure, disk I/O and free space,
+  # and network throughput — essential for diagnosing resource exhaustion
+  # during start-of-term payment spikes.
+  - job_name: node
+    static_configs:
+      - targets:
+          - "node_exporter:9100"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "docker-host"

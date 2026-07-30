@@ -51,11 +51,10 @@ spec:
           ports:
             - containerPort: 5000
           env:
-            # Inject sensitive values from a Kubernetes Secret, not plain ConfigMaps.
-            # Create the secret with:
-            #   kubectl create secret generic stellaredupay \
-            #     --from-literal=JWT_SECRET=<value> \
-            #     --from-literal=MONGO_URI=<value>
+            # Sensitive values are injected from a Kubernetes Secret.
+            # To provision the secret, run scripts/provision-k8s-secrets.sh
+            # (see docs/operator-runbooks.md § Secret Provisioning for the
+            # full checklist, rotation procedure, and audit requirements).
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -66,8 +65,11 @@ spec:
                 secretKeyRef:
                   name: stellaredupay
                   key: MONGO_URI
-            - name: STELLAR_NETWORK
-              value: "mainnet"
+            # STELLAR_NETWORK is not set here — it must be provided by the
+            # environment-specific Kustomize overlay (overlays/mainnet or
+            # overlays/testnet). Applying this base manifest directly without
+            # an overlay will intentionally omit the value, preventing
+            # accidental cross-environment deployments.
             - name: REDIS_HOST
               value: "redis"
           readinessProbe:

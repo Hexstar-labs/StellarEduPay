@@ -20,6 +20,22 @@ const logger = require('../utils/logger').child('ReminderController');
 const { REMINDER_COOLDOWN_HOURS, REMINDER_MAX_COUNT, JWT_SECRET } = config;
 
 /**
+ * Escape HTML special characters to prevent XSS when interpolating
+ * user-controlled values into HTML responses.
+ *
+ * @param {string} str  Raw value (may be undefined/null)
+ * @returns {string}    HTML-safe string
+ */
+function escapeHtml(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
+}
+
+/**
  * POST /api/reminders/trigger
  * Manually trigger a reminder run for all schools (or a specific school via body).
  */
@@ -134,7 +150,11 @@ async function unsubscribeViaToken(req, res, next) {
       return res.status(404).json({ error: 'Student not found', code: 'NOT_FOUND' });
     }
 
-    // Return HTML confirmation page
+    // Return HTML confirmation page — escape all user-controlled values to
+    // prevent stored XSS.  student.name is fully attacker-controllable (set via
+    // POST /api/students, PUT, or CSV bulk import) and this endpoint is public.
+    const safeName      = escapeHtml(student.name);
+    const safeStudentId = escapeHtml(student.studentId);
     const html = `
       <!DOCTYPE html>
       <html>
@@ -146,8 +166,8 @@ async function unsubscribeViaToken(req, res, next) {
         </style>
       </head>
       <body>
-        <h1 class="success">✓ Unsubscribed</h1>
-        <p>You have been unsubscribed from fee reminders for student <strong>${student.name}</strong> (ID: ${student.studentId}).</p>
+        <h1 class="success">&#x2713; Unsubscribed</h1>
+        <p>You have been unsubscribed from fee reminders for student <strong>${safeName}</strong> (ID: ${safeStudentId}).</p>
         <p>You can resubscribe at any time by contacting your school administrator.</p>
       </body>
       </html>

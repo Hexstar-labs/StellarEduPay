@@ -2,7 +2,7 @@
 
 ## Process-level handlers
 
-Installed in `src/errorHandling.js` and wired once from `src/app.js`.
+Installed in `src/errorHandling.js` and wire once from `src/app.js`.
 
 ### `unhandledRejection`
 - **Action**: log structured context, then **exit(1)**.

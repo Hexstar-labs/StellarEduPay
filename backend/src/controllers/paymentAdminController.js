@@ -16,7 +16,7 @@ const { syncPaymentsForSchool } = require('../services/stellarService');
 const { initiateRefund, approveRefund, getRefundsByPayment, getRefundsBySchool } = require('../services/refundService');
 const { generateReconciliationReport } = require('../services/reconciliationService');
 const lock = require('../services/distributedLock');
-const { ADMIN_PAYMENT_STATUS_TRANSITIONS } = require('../constants/paymentStatus');
+const { ADMIN_PAYMENT_STATUS_TRANSITIONS, PAYMENT_STATUS } = require('../constants/paymentStatus');
 
 // TTL for the per-school distributed sync lock (60 s — long enough to complete
 // a full blockchain sync while short enough to auto-expire after a crash).
@@ -141,7 +141,7 @@ async function generateReceipt(req, res, next) {
     const existing = await Receipt.findOne({ txHash, schoolId });
     if (existing) return res.json(existing);
 
-    const payment = await Payment.findOne({ txHash, schoolId, status: 'SUCCESS' });
+    const payment = await Payment.findOne({ txHash, schoolId, status: PAYMENT_STATUS.SUCCESS });
     if (!payment) {
       return res.status(404).json({ error: 'Confirmed payment not found for this transaction hash', code: 'NOT_FOUND' });
     }
@@ -287,7 +287,7 @@ async function updatePaymentStatus(req, res, next) {
     const { status: newStatus, reason } = req.body;
 
     if (!newStatus || !reason) return res.status(400).json({ error: 'status and reason are required', code: 'VALIDATION_ERROR' });
-    if (newStatus === 'PENDING') return res.status(400).json({ error: 'Cannot transition to PENDING', code: 'INVALID_TRANSITION' });
+    if (newStatus === PAYMENT_STATUS.PENDING) return res.status(400).json({ error: 'Cannot transition to PENDING', code: 'INVALID_TRANSITION' });
 
     const payment = await Payment.findOne({ schoolId: req.schoolId, txHash });
     if (!payment) {
@@ -408,8 +408,9 @@ function streamPaymentEvents(req, res) {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  // addClient owns the per-connection heartbeat and enforces the per-school
-  // connection cap. A false return means the cap is reached — reject cleanly.
+  // addClient owns the per-connection heartbeat, enforces the per-school
+  // connection cap, and — when Redis is already degraded — immediately sends
+  // an sse.degraded event to this client (Issue #1054).
   if (!addClient(schoolId, res)) {
     res.write('event: error\ndata: {"error":"too_many_connections"}\n\n');
     res.end();
@@ -429,7 +430,7 @@ async function initiatePaymentRefund(req, res, next) {
 
     if (!reason) return res.status(400).json({ error: 'reason is required', code: 'VALIDATION_ERROR' });
 
-    const payment = await Payment.findOne({ schoolId, txHash, status: 'SUCCESS' });
+    const payment = await Payment.findOne({ schoolId, txHash, status: PAYMENT_STATUS.SUCCESS });
     if (!payment) {
       return res.status(404).json({ error: 'Confirmed payment not found', code: 'NOT_FOUND' });
     }
@@ -607,7 +608,7 @@ async function correctPlaceholderPayment(req, res, next) {
     }
 
     // Find the placeholder payment (zero amount, FAILED status)
-    const placeholder = await Payment.findOne({ schoolId, txHash, amount: 0, status: 'FAILED' });
+    const placeholder = await Payment.findOne({ schoolId, txHash, amount: 0, status: PAYMENT_STATUS.FAILED });
     if (!placeholder) {
       return res.status(404).json({
         error: 'Placeholder payment not found (must have amount 0 and status FAILED)',

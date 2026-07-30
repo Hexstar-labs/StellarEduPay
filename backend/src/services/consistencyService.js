@@ -149,7 +149,10 @@ async function checkStudentBalanceConsistency(schoolId) {
 async function checkConsistency() {
   const schools = await School.find({ isActive: true }).lean();
 
-  const schoolResults = await Promise.all(
+  // Use Promise.allSettled so a transient Horizon error for one school does not
+  // abort the entire consistency cycle — every other school's check still runs
+  // and records its results normally.
+  const settled = await Promise.allSettled(
     schools.map((school) =>
       checkSchoolConsistency({
         schoolId: school.schoolId,
@@ -157,6 +160,30 @@ async function checkConsistency() {
       })
     )
   );
+
+  const schoolResults = [];
+  for (let i = 0; i < settled.length; i++) {
+    const outcome = settled[i];
+    if (outcome.status === 'fulfilled') {
+      schoolResults.push(outcome.value);
+    } else {
+      // Log the per-school failure so operators know which tenant is affected,
+      // but don't let it silence the results from healthy schools.
+      const schoolId = schools[i]?.schoolId ?? `index-${i}`;
+      console.error(
+        `[consistencyService] checkSchoolConsistency failed for school ${schoolId}:`,
+        outcome.reason
+      );
+      schoolResults.push({
+        schoolId,
+        error: outcome.reason?.message ?? String(outcome.reason),
+        totalDbPayments: 0,
+        totalChainTxsScanned: 0,
+        mismatchCount: 0,
+        mismatches: [],
+      });
+    }
+  }
 
   const totalDbPayments = schoolResults.reduce((s, r) => s + r.totalDbPayments, 0);
   const totalChainTxsScanned = schoolResults.reduce((s, r) => s + r.totalChainTxsScanned, 0);
