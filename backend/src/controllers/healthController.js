@@ -3,7 +3,6 @@
 const database = require('../config/database');
 const { horizonClient, CB_FAILURE_THRESHOLD, CB_RESET_TIMEOUT_MS, CB_HALF_OPEN_SUCCESS_THRESHOLD } = require('../config/stellarConfig');
 const config = require('../config');
-const { concurrentPaymentProcessor } = require('../services/concurrentPaymentProcessor');
 const { getReminderStatus } = require('../services/reminderService');
 const { getCachedRates } = require('../services/currencyConversionService');
 const { getAuditHealth } = require('../services/auditService');
@@ -86,7 +85,10 @@ async function healthCheck(req, res) {
     statusCode = 200; // Still return 200 since DB is up and cached data can be served
   }
 
-  const { queueDepth, maxQueueDepth } = concurrentPaymentProcessor.getStats();
+  // concurrentPaymentProcessor was removed (#1036) — mirror the same fallback
+  // transactionPollingService.js uses when stats are unavailable.
+  const queueDepth = 0;
+  const maxQueueDepth = config.MAX_QUEUE_DEPTH;
 
   // Retry queue init status. For the Redis-backed BullMQ pipeline this reflects
   // whether initializeRetryQueue() succeeded; for the MongoDB fallback it reflects
