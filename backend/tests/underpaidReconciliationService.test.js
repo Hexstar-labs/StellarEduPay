@@ -235,53 +235,99 @@ describe('initiateRefund', () => {
 
 describe('completeRefund', () => {
   const REFUND_TX_HASH = 'b'.repeat(64);
+  const OTHER_SCHOOL_ID = 'school-other';
 
-  it('does NOT call findById when passed a txHash, calls findOne({ txHash }) instead', async () => {
+  it('does NOT call findById when passed a txHash, calls findOne({ txHash, schoolId }) instead', async () => {
     const payment = makePayment();
     mockFindOne.mockResolvedValue(payment);
 
-    await completeRefund(STELLAR_TX_HASH, REFUND_TX_HASH);
+    await completeRefund(STELLAR_TX_HASH, REFUND_TX_HASH, SCHOOL_ID);
 
     expect(mockFindById).not.toHaveBeenCalled();
-    expect(mockFindOne).toHaveBeenCalledWith({ txHash: STELLAR_TX_HASH });
+    expect(mockFindOne).toHaveBeenCalledWith({ txHash: STELLAR_TX_HASH, schoolId: SCHOOL_ID });
   });
 
-  it('calls findById when passed a valid ObjectId', async () => {
+  it('scopes the ObjectId lookup to schoolId via findOne({ _id, schoolId })', async () => {
     const payment = makePayment();
-    mockFindById.mockResolvedValue(payment);
-
-    await completeRefund(MONGO_ID, REFUND_TX_HASH);
-
-    expect(mockFindById).toHaveBeenCalledWith(MONGO_ID);
-    expect(mockFindOne).not.toHaveBeenCalled();
-  });
-
-  it('falls through to findOne({ txHash }) when findById returns null for a valid ObjectId', async () => {
-    const payment = makePayment();
-    mockFindById.mockResolvedValue(null);
     mockFindOne.mockResolvedValue(payment);
 
-    await completeRefund(MONGO_ID, REFUND_TX_HASH);
+    await completeRefund(MONGO_ID, REFUND_TX_HASH, SCHOOL_ID);
 
-    expect(mockFindById).toHaveBeenCalledWith(MONGO_ID);
-    expect(mockFindOne).toHaveBeenCalledWith({ txHash: MONGO_ID });
+    expect(mockFindById).not.toHaveBeenCalled();
+    expect(mockFindOne).toHaveBeenCalledWith({ _id: MONGO_ID, schoolId: SCHOOL_ID });
+  });
+
+  it('falls through to findOne({ txHash, schoolId }) when ObjectId lookup returns null', async () => {
+    const payment = makePayment();
+    // First call (ObjectId branch) returns null, second (txHash branch) succeeds.
+    mockFindOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(payment);
+
+    await completeRefund(MONGO_ID, REFUND_TX_HASH, SCHOOL_ID);
+
+    expect(mockFindOne).toHaveBeenNthCalledWith(1, { _id: MONGO_ID, schoolId: SCHOOL_ID });
+    expect(mockFindOne).toHaveBeenNthCalledWith(2, { txHash: MONGO_ID, schoolId: SCHOOL_ID });
   });
 
   it('throws Payment not found when neither lookup matches', async () => {
-    mockFindById.mockResolvedValue(null);
     mockFindOne.mockResolvedValue(null);
 
     await expect(
-      completeRefund(STELLAR_TX_HASH, REFUND_TX_HASH),
+      completeRefund(STELLAR_TX_HASH, REFUND_TX_HASH, SCHOOL_ID),
     ).rejects.toThrow(`Payment not found: ${STELLAR_TX_HASH}`);
   });
 
   it('throws when refundTxHash is missing', async () => {
     await expect(
-      completeRefund(STELLAR_TX_HASH, undefined),
+      completeRefund(STELLAR_TX_HASH, undefined, SCHOOL_ID),
     ).rejects.toThrow('refundTxHash is required');
 
     expect(mockFindById).not.toHaveBeenCalled();
     expect(mockFindOne).not.toHaveBeenCalled();
+  });
+
+  // ── Cross-school isolation ──────────────────────────────────────────────────
+  // A payment owned by school-other must not be reachable when completeRefund
+  // is called with school-test's schoolId — even if the caller supplies the
+  // exact txHash of that payment.  This is the core acceptance criterion for
+  // the tenant-isolation fix.
+
+  it('cannot act on a payment belonging to a different school (txHash path)', async () => {
+    // The DB is modelled: findOne({ txHash, schoolId }) returns null when
+    // schoolId doesn't match the stored record — simulating the DB correctly
+    // refusing a cross-tenant lookup.
+    mockFindOne.mockImplementation(async (filter) => {
+      // Only return the payment if the schoolId matches the payment's own school.
+      if (filter.schoolId === OTHER_SCHOOL_ID) return makePayment({ schoolId: OTHER_SCHOOL_ID });
+      return null; // wrong school → not found
+    });
+
+    await expect(
+      completeRefund(STELLAR_TX_HASH, REFUND_TX_HASH, SCHOOL_ID),
+    ).rejects.toThrow(`Payment not found: ${STELLAR_TX_HASH}`);
+
+    // Every findOne call must have included the caller's schoolId, never the
+    // other school's id.
+    for (const call of mockFindOne.mock.calls) {
+      expect(call[0]).toMatchObject({ schoolId: SCHOOL_ID });
+      expect(call[0].schoolId).not.toBe(OTHER_SCHOOL_ID);
+    }
+  });
+
+  it('cannot act on a payment belonging to a different school (ObjectId path)', async () => {
+    mockFindOne.mockImplementation(async (filter) => {
+      if (filter.schoolId === OTHER_SCHOOL_ID) return makePayment({ schoolId: OTHER_SCHOOL_ID });
+      return null;
+    });
+
+    await expect(
+      completeRefund(MONGO_ID, REFUND_TX_HASH, SCHOOL_ID),
+    ).rejects.toThrow(`Payment not found: ${MONGO_ID}`);
+
+    for (const call of mockFindOne.mock.calls) {
+      expect(call[0]).toMatchObject({ schoolId: SCHOOL_ID });
+      expect(call[0].schoolId).not.toBe(OTHER_SCHOOL_ID);
+    }
   });
 });

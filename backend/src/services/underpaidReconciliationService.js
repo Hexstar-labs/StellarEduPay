@@ -186,19 +186,23 @@ async function initiateRefund(paymentId, refundInitiatedBy, schoolId, refundNote
  * Called when refund transaction is confirmed on-chain
  * @param {string} paymentId - Payment document ID or txHash
  * @param {string} refundTxHash - Stellar transaction hash of the refund
+ * @param {string} schoolId - School ID for tenant scope
  * @returns {Promise<object>} Updated payment document
  */
-async function completeRefund(paymentId, refundTxHash) {
+async function completeRefund(paymentId, refundTxHash, schoolId) {
   if (!refundTxHash) {
     throw new Error('refundTxHash is required to complete refund');
   }
 
-  // Find payment by ID or txHash (same isValid() guard as applyPartialCredit)
+  // Find payment by ID or txHash, always scoped to schoolId so that a
+  // caller cannot act on a payment belonging to a different tenant —
+  // matching the isolation pattern used by applyPartialCredit and
+  // initiateRefund in this file.
   let payment = mongoose.Types.ObjectId.isValid(paymentId)
-    ? await Payment.findById(paymentId)
+    ? await Payment.findOne({ _id: paymentId, schoolId })
     : null;
   if (!payment) {
-    payment = await Payment.findOne({ txHash: paymentId });
+    payment = await Payment.findOne({ txHash: paymentId, schoolId });
   }
 
   if (!payment) {
