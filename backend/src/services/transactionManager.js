@@ -201,6 +201,13 @@ class TransactionManager {
   async startSession() {
     const connection = getConnection();
     const session = await connection.startSession();
+
+    // startTransaction() MUST be called before any operations can be sent
+    // over the session.  Without it, commitTransaction() and abortTransaction()
+    // both throw "Transaction number, statement number, and start time must be
+    // specified…" because the driver requires an active transaction before
+    // either can complete.
+    session.startTransaction(DEFAULT_TRANSACTION_OPTIONS);
     
     const transactionId = ++this.transactionCounter;
     const transactionInfo = {
