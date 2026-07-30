@@ -23,9 +23,17 @@ async function updateEmailDeliveryStatus(selector, status, updateFields = {}) {
     { new: true }
   );
 
-  const record = selector.recordId
-    ? await query.bypassTenantScope()
-    : await query;
+  // The recordId branch is a direct _id lookup on a known tenant document, so
+  // bypassing tenant scope is safe and expected (the document's own schoolId is
+  // not in the filter, but the _id uniquely identifies it).
+  //
+  // The non-recordId branch identifies records by (provider, providerMessageId) —
+  // a provider-assigned identifier that is NOT a tenant-scoped field. These
+  // identifiers arrive from external webhook callbacks where the school is unknown
+  // at the time of the lookup. Bypass is intentional and correct here; the unique
+  // sparse index on (provider, providerMessageId) ensures we always hit exactly
+  // one document regardless of schoolId.
+  const record = await query.bypassTenantScope();
   if (record && record.schoolId && record.studentId) {
     const timestamp = updateFields.deliveredAt || updateFields.openedAt || updateFields.bouncedAt || updateFields.complaintAt || record.sentAt || new Date();
     await updateStudentDeliveryStatus(record.schoolId, record.studentId, status, timestamp);

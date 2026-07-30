@@ -77,10 +77,19 @@ async function savePayment(data, options = {}) {
 }
 
 /**
- * Retrieve all payments for a given student, sorted by most recent first.
+ * Retrieve all payments for a given student within a specific school, sorted by most recent first.
+ * schoolId is required to prevent cross-tenant data leaks: studentId is only unique per school,
+ * so two different schools can legitimately share the same studentId value.
+ * @param {string} schoolId - Required tenant scope.
+ * @param {string} studentId - Student identifier within the school.
  */
-async function getPaymentsByStudent(studentId) {
-  return Payment.find({ studentId, deletedAt: null }).sort({ confirmedAt: -1 }).lean();
+async function getPaymentsByStudent(schoolId, studentId) {
+  if (!schoolId) {
+    const err = new Error('schoolId is required for getPaymentsByStudent');
+    err.code = 'MISSING_SCHOOL_ID';
+    throw err;
+  }
+  return Payment.find({ schoolId, studentId, deletedAt: null }).sort({ confirmedAt: -1 }).lean();
 }
 
 module.exports = { savePayment, getPaymentsByStudent };
