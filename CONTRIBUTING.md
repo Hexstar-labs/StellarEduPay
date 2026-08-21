@@ -293,171 +293,29 @@ const calc = (sid, fid) => {
 ```
 
 ---
-
 ## 🧪 Testing Requirements
 
-### Running Tests
+### Where tests live
 
-#### 1. Install root dependencies (first time only)
+| Location | Purpose |
+|----------|---------|
+| `backend/tests/` | Backend unit / service / controller tests |
+| `tests/` | Root cross-cutting suites only (e2e, integration, helpers) |
+| `frontend/` | Frontend tests (own package scripts) |
+
+**Rule:** never put the same filename under both `tests/` and `backend/tests/`.
+
+### Running tests
 
 ```bash
-# From the project root
-npm install
-```
-
-#### 2. Run the full test suite
-
-```bash
-# From the project root
+# Root suite (tests/ only — not backend/tests)
 npm test
-```
 
-All tests mock both the Stellar SDK and MongoDB — **no real network connection or running database is required**.
+# Backend suite only
+npm run test:backend
 
-Expected output:
-
-```
-PASS tests/stellar.test.js
-PASS tests/payment.test.js
-PASS tests/payment-limits.test.js
-...
-
-Test Suites: X passed, X total
-Tests:       X passed, X total
-Time:        ~5s
-```
-
-#### 3. Run a single test file
-
-```bash
-npm test -- tests/stellar.test.js
-npm test -- tests/payment.test.js
-npm test -- tests/payment-limits.test.js
-```
-
-#### 4. Check code coverage
-
-```bash
-npm test -- --coverage
-```
-
-Jest will print a per-file coverage table and write a full HTML report to `coverage/lcov-report/index.html`.
-
-#### Test files and what they cover
-
-| File | Coverage |
-|------|----------|
-| [`tests/stellar.test.js`](tests/stellar.test.js) | Stellar service: asset detection, fee validation, amount normalisation, transaction verification, ledger sync |
-| [`tests/payment.test.js`](tests/payment.test.js) | Payment API: full payment flow, all endpoints, edge cases, error handling |
-| [`tests/payment-limits.test.js`](tests/payment-limits.test.js) | Payment limits: validation, boundary cases, error codes |
-
-#### Environment variables for tests
-
-Tests use mocks and do **not** require a real `.env` file. If you want to run the backend's own test suite separately:
-
-```bash
-cd backend
-npm test
-```
-
-The backend tests also use mocks; no live MongoDB or Stellar Horizon connection is needed.
-
-### Test Coverage Requirements
-
-- **New features** must include unit tests
-- **Bug fixes** should include regression tests
-- **API endpoints** require integration tests
-- **Critical services** (Stellar integration, payment processing) require comprehensive test coverage
-
-### Writing Tests
-
-We use **Jest** as our testing framework. Tests should:
-
-- Be isolated and not depend on external services
-- Mock Stellar SDK calls to avoid hitting the network
-- Use descriptive test names that explain the scenario
-- Follow the Arrange-Act-Assert pattern
-
-**Example Test:**
-
-```javascript
-describe('Payment Validation', () => {
-  it('should reject payments below minimum amount', async () => {
-    // Arrange
-    const payment = { amount: 0.001, studentId: 'STU001' };
-    
-    // Act
-    const result = await validatePayment(payment);
-    
-    // Assert
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('below minimum');
-  });
-});
-```
-
----
-
-## 🔄 Pull Request Process
-
-### Before Submitting
-
-1. **Sync with main branch**
-   ```bash
-   git checkout main
-   git pull origin main
-   git checkout your-branch
-   git rebase main
-   ```
-
-2. **Run all checks locally**
-   ```bash
-   # Run tests (from project root)
-   npm test
-   
-   # Check backend syntax
-   node -c backend/src/app.js
-   ```
-
-3. **Update documentation**
-   - Update `docs/api-spec.md` if you changed API endpoints
-   - Update `README.md` if you added new features or changed setup
-   - Add inline code comments for complex logic
-
-### Submitting Your PR
-
-1. **Push your branch**
-   ```bash
-   git push origin your-branch-name
-   ```
-
-2. **Create Pull Request on GitHub**
-   - Use a clear, descriptive title
-   - Reference the issue: "Closes #123" or "Fixes #456"
-   - Describe what changed and why
-   - Include screenshots for UI changes
-   - List any breaking changes
-
-3. **PR Template**
-   ```markdown
-   ## Description
-   Brief description of changes
-   
-   ## Related Issue
-   Closes #123
-   
-   ## Changes Made
-   - Added payment reminder scheduler
-   - Updated email notification service
-   - Added tests for reminder logic
-   
-   ## Testing
-   - [ ] Unit tests added/updated
-   - [ ] Manual testing completed
-   - [ ] No console errors
-   
-   ## Screenshots (if applicable)
-   [Add screenshots for UI changes]
+# Or from backend folder
+cd backend && npm test
    ```
 
 ### PR Review Requirements
