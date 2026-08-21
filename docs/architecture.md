@@ -13,6 +13,7 @@ StellarEduPay is a three-tier application: a Next.js frontend, a Node.js/Express
 - [Controllers](#controllers)
 - [Middleware](#middleware)
 - [MongoDB Schema Relationships](#mongodb-schema-relationships)
+- [Replica Set Requirement](#replica-set-requirement)
 - [Background Workers](#background-workers)
 - [Queue Durability](#queue-durability)
 - [Multi-School Tenancy](#multi-school-tenancy)
@@ -326,6 +327,36 @@ School
 - `FeeStructure.className` is unique per school (`{ schoolId, className }` compound unique index).
 - Payments and Students use soft delete (`deletedAt` field) — records are never hard-deleted.
 - Payment audit trail is immutable once `status` reaches `SUCCESS` or `FAILED`.
+
+---
+
+## Replica Set Requirement
+
+MongoDB **multi-document transactions require a replica set (or a sharded cluster)**. This is an infrastructure requirement, not an application-code concern: against a standalone `mongod`, every attempt to start a transaction fails with
+
+```
+MongoServerError: Transaction numbers are only allowed on a replica set member or mongos
+```
+
+and no change to application code can fix it — the database must run with `--replSet` and be initiated once with `rs.initiate()`.
+
+StellarEduPay uses multi-document transactions on its core write paths, so this requirement applies to every environment that runs the backend:
+
+- `transactionPollingService.processTransaction` — records the Payment and updates the Student balance atomically
+- `stellarService.verifyTransaction` — same pair of writes for manually verified payments
+- `feeController` and `feeAdjustmentController` batch apply — multi-document fee updates
+- `transactionManager.js` (`withTransaction`, `safeDebit`, `safeCredit`, `atomicTransfer`)
+
+### How each environment complies
+
+| Environment | Configuration |
+|-------------|---------------|
+| Docker Compose | `mongo` service runs `mongod --replSet rs0` with a boot-generated keyfile; its healthcheck runs `rs.initiate()` and only reports healthy once the node is PRIMARY. Backend/backup URIs include `replicaSet=rs0`. |
+| CI (GitHub Actions) | Both Mongo service containers (`test` and `docker-build` jobs) start with `--replSet rs0`; their healthcheck performs `rs.initiate()` so job steps begin only after initiation. |
+| Kubernetes | `deploy/k8s/mongodb-statefulset.yaml` runs `--replSet rs0 --bind_ip_all` with a postStart hook that initiates rs0; the readiness probe gates traffic on writability (`db.hello().isWritablePrimary`). MONGO_URI must include `?replicaSet=rs0`. |
+| Local development | Run `mongod --replSet rs0` and call `rs.initiate()` once (see README "Prerequisites"). |
+
+> **Note**: MongoDB Atlas deployments are replica sets by default and need no extra configuration. A standalone `mongod` is sufficient ONLY where no code path opens a session — which is nowhere in this backend.
 
 ---
 
