@@ -49,8 +49,31 @@ async function _isReplay(deliveryId) {
   if (isRedisReady()) {
     const redis = getRedisClient();
     const key = `webhook:nonce:${deliveryId}`;
-    const result = await redis.set(key, '1', 'EX', REPLAY_WINDOW_S, 'NX');
-    return result === null;
+    try {
+      const result = await redis.set(key, '1', 'EX', REPLAY_WINDOW_S, 'NX');
+      return result === null;
+    } catch (redisErr) {
+      // Redis operation failed during an otherwise-ready connection (e.g. a
+      // transient command error). Fail closed: treat as a replay rather than
+      // silently allowing the delivery through with no dedup guarantee.
+      logger.error('Redis error in _isReplay — failing closed', {
+        deliveryId, error: redisErr.message,
+      });
+      return true;
+    }
+  }
+  // Redis is not configured or not ready. In a multi-replica deployment the
+  // per-process Map provides no cross-replica dedup guarantee. Fail closed so
+  // integrators receive a clear operational signal (Redis required) rather than
+  // silently degraded replay protection.
+  //
+  // If Redis is intentionally absent (single-process dev/test), set
+  // WEBHOOK_REPLAY_NONCES_LOCAL=true to restore the previous in-process fallback.
+  if (!process.env.WEBHOOK_REPLAY_NONCES_LOCAL) {
+    logger.warn('Redis unavailable in _isReplay — failing closed (set WEBHOOK_REPLAY_NONCES_LOCAL=true to enable in-process fallback)', {
+      deliveryId,
+    });
+    return true;
   }
   _evictExpiredNonces();
   if (_localNonces.has(deliveryId)) return true;
@@ -61,14 +84,63 @@ async function _isReplay(deliveryId) {
 function _resetNonces() { _localNonces.clear(); }
 
 // ── HMAC helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * V1 signature — signs only the JSON body (legacy, kept for backward compat).
+ * @param {object} payload
+ * @param {string} secret
+ * @returns {string} hex digest
+ */
 function generateSignature(payload, secret) {
   return crypto.createHmac('sha256', secret).update(JSON.stringify(payload)).digest('hex');
+}
+
+/**
+ * V2 signature — signs `${timestamp}.${deliveryId}.${rawBody}` where rawBody
+ * is the exact serialised JSON string that is transmitted on the wire.
+ *
+ * This binds the timestamp and delivery-ID to the signature so an attacker
+ * cannot replay a valid signature with a rewritten timestamp or a fresh
+ * delivery-ID.
+ *
+ * @param {number|string} timestamp  Unix epoch seconds
+ * @param {string}        deliveryId UUID of this delivery
+ * @param {string}        rawBody    The exact JSON string sent in the HTTP body
+ * @param {string}        secret     HMAC secret
+ * @returns {string} hex digest
+ */
+function generateSignatureV2(timestamp, deliveryId, rawBody, secret) {
+  const signingBase = `${timestamp}.${deliveryId}.${rawBody}`;
+  return crypto.createHmac('sha256', secret).update(signingBase).digest('hex');
 }
 
 function verifySignature(payload, providedSignature, secret) {
   const expected = generateSignature(payload, secret);
   const expectedBuf = Buffer.from(expected, 'hex');
   const actualBuf   = Buffer.from(providedSignature, 'hex');
+  if (expectedBuf.length !== actualBuf.length) return false;
+  return crypto.timingSafeEqual(expectedBuf, actualBuf);
+}
+
+/**
+ * Verify a V2 signature (constant-time comparison).
+ *
+ * @param {number|string} timestamp
+ * @param {string}        deliveryId
+ * @param {string}        rawBody    Exact bytes received
+ * @param {string}        providedSignature  Hex digest (without 'sha256=' prefix)
+ * @param {string}        secret
+ * @returns {boolean}
+ */
+function verifySignatureV2(timestamp, deliveryId, rawBody, providedSignature, secret) {
+  const expected = generateSignatureV2(timestamp, deliveryId, rawBody, secret);
+  const expectedBuf = Buffer.from(expected, 'hex');
+  let actualBuf;
+  try {
+    actualBuf = Buffer.from(providedSignature, 'hex');
+  } catch {
+    return false;
+  }
   if (expectedBuf.length !== actualBuf.length) return false;
   return crypto.timingSafeEqual(expectedBuf, actualBuf);
 }
@@ -211,9 +283,12 @@ async function _sendToUrl({
   const timestamp = Math.floor(Date.now() / 1000);
   const body = {
     event,
-    timestamp: new Date().toISOString(),
+    timestamp: new Date(timestamp * 1000).toISOString(),
     data: filteredPayload,
   };
+
+  // Serialize exactly once so the bytes we sign are the bytes we transmit.
+  const rawBody = JSON.stringify(body);
 
   const headers = {
     'Content-Type': 'application/json',
@@ -223,7 +298,14 @@ async function _sendToUrl({
     'X-StellarEduPay-Delivery-ID': deliveryId,
   };
   if (correlationId) headers['X-StellarEduPay-Correlation-Id'] = correlationId;
-  if (secret) headers['X-StellarEduPay-Signature'] = `sha256=${generateSignature(body, secret)}`;
+  if (secret) {
+    // V1 — kept for backward compatibility during the migration window.
+    // Signs JSON.stringify(body) only; timestamp and deliveryId are NOT covered.
+    headers['X-StellarEduPay-Signature'] = `sha256=${generateSignature(body, secret)}`;
+    // V2 — signs `timestamp.deliveryId.rawBody` so the timestamp and delivery-ID
+    // are bound to the signature and cannot be rewritten by an attacker.
+    headers['X-StellarEduPay-Signature-V2'] = `sha256=${generateSignatureV2(timestamp, deliveryId, rawBody, secret)}`;
+  }
 
   // Generic tracing header (#978); the vendor-specific correlation + signature
   // headers are already set above.
@@ -233,7 +315,7 @@ async function _sendToUrl({
   const startTime = Date.now();
 
   try {
-    const response = await http.post(url, body, {
+    const response = await http.post(url, rawBody, {
       headers,
       validateStatus: (s) => s >= 200 && s < 300,
     });
@@ -793,6 +875,8 @@ module.exports = {
   // HMAC
   generateSignature,
   verifySignature,
+  generateSignatureV2,
+  verifySignatureV2,
   // Retry
   queueWebhookRetry,
   processPendingRetries,
