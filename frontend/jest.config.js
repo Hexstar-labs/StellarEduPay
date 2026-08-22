@@ -16,7 +16,7 @@ module.exports = {
     '!src/**/*.d.ts',
   ],
   coverageReporters: ['text', 'text-summary', 'lcov', 'json-summary', 'html', 'cobertura'],
-  coverageDirectory: 'coverage/frontend',
+  coverageDirectory: '../coverage/frontend',
   coverageThreshold: {
     global: {
       branches: 47,
