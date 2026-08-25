@@ -61,7 +61,7 @@ async function createSchool(req, res, next) {
     }
 
     // Verify Stellar account funding (non-blocking)
-    const { isFunded, warning } = await verifyStellarAccountFunding(stellarAddress);
+    const { warning } = await verifyStellarAccountFunding(stellarAddress);
 
     const schoolId = `SCH-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
     const school = await School.create({
@@ -255,7 +255,7 @@ async function updateSchool(req, res, next) {
     // Verify Stellar account funding if address is being updated (non-blocking)
     let warning = null;
     if (updates.stellarAddress) {
-      const { isFunded, warning: fundingWarning } = await verifyStellarAccountFunding(updates.stellarAddress);
+      const { warning: fundingWarning } = await verifyStellarAccountFunding(updates.stellarAddress);
       warning = fundingWarning;
     }
 

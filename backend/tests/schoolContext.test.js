@@ -262,8 +262,11 @@ describe('resolveSchool Middleware & Cache Invalidation (#1283)', () => {
       const endDb = process.hrtime.bigint();
       const dbTotalMs = Number(endDb - startDb) / 1e6;
 
+      // eslint-disable-next-line no-console
       console.log(`[Benchmark] ${iterations} resolveSchool calls:`);
+      // eslint-disable-next-line no-console
       console.log(`  Cache Hits (0 DB queries): ${cacheTotalMs.toFixed(3)} ms (avg ${(cacheTotalMs / iterations).toFixed(4)} ms/call)`);
+      // eslint-disable-next-line no-console
       console.log(`  Cache Misses (1 DB query): ${dbTotalMs.toFixed(3)} ms (avg ${(dbTotalMs / iterations).toFixed(4)} ms/call)`);
 
       expect(cacheTotalMs).toBeLessThan(dbTotalMs);
