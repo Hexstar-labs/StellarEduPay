@@ -1,12 +1,26 @@
 /**
  * Transaction Manager Service
- * 
+ *
  * Provides production-ready transaction management for MongoDB with support for:
  * - ACID transactions with proper isolation levels
  * - Optimistic and pessimistic locking strategies
  * - Automatic retry with exponential backoff for transient errors
  * - Safe debit/credit operations for financial transactions
  * - Deadlock detection and recovery
+ *
+ * ── INFRASTRUCTURE REQUIREMENT: REPLICA SET ────────────────────────────────
+ * Multi-document MongoDB transactions REQUIRE a replica set or sharded
+ * cluster. Against a standalone mongod, EVERY call in this module fails with:
+ *
+ *   MongoServerError: Transaction numbers are only allowed on a replica set
+ *   member or mongos
+ *
+ * That error is an infrastructure misconfiguration, not a code bug — the fix
+ * is to run mongod with --replSet and execute rs.initiate() once. All
+ * bundled environments comply: docker-compose.yml and the CI workflow run a
+ * single-node replica set named "rs0", and deploy/k8s/mongodb-statefulset.yaml
+ * configures the StatefulSet the same way. See docs/architecture.md,
+ * "Replica Set Requirement".
  */
 
 'use strict';
@@ -117,25 +131,39 @@ class TransactionManager {
   }
 
   /**
-   * Check if error is retryable
+   * Check if an error is retryable, strictly per the MongoDB driver error
+   * contract.
+   *
+   * Only two signals are honoured:
+   *  1. Driver error labels — 'TransientTransactionError' and
+   *     'UnknownTransactionCommitResult' — attached by the server/driver.
+   *  2. Explicit numeric server error codes that are transient by definition.
+   *
+   * Error MESSAGE substring matching is deliberately NOT used. Messages are
+   * free-form text; matching words like 'Lock' or 'transaction' would replay
+   * non-transient failures (up to maxRetries times). In a module that moves
+   * money, replaying an error whose effects may already be durable is the
+   * most dangerous possible behaviour. If a failure is genuinely transient,
+   * the server tells us so via a label or one of the codes below.
    */
   isRetryableError(error) {
-    const retryablePatterns = [
-      'TransientTransactionError',
-      'WriteConflict',
-      'LockTimeout',
-      'PreparedTransactionInProgress',
-      'WriteConflict:',
-      'Lock',
-      'transaction',
-    ];
-    
-    return (
-      error.hasErrorLabel?.('TransientTransactionError') ||
-      error.code === 112 || // WriteConflict
-      error.code === 189 || // LockTimeout
-      retryablePatterns.some(pattern => error.message?.includes(pattern))
-    );
+    if (!error) return false;
+
+    if (typeof error.hasErrorLabel === 'function') {
+      if (
+        error.hasErrorLabel('TransientTransactionError') ||
+        error.hasErrorLabel('UnknownTransactionCommitResult')
+      ) {
+        return true;
+      }
+    }
+
+    switch (error.code) {
+      case 112: return true; // WriteConflict
+      case 189: return true; // PrimarySteppedDown (election aborts the txn)
+      case 261: return true; // TooManyLogicalSessions
+      default:  return false;
+    }
   }
 
   /**
@@ -196,7 +224,12 @@ class TransactionManager {
   }
 
   /**
-   * Start a new transaction session
+   * Start a new transaction session (manual control path).
+   *
+   * Prefer withTransaction() — it delegates lifecycle and retry semantics to
+   * the driver. startSession() exists for callers that need explicit
+   * commit/abort control (safeDebit/safeCredit/atomicTransfer below) and does
+   * NOT retry: once a transaction aborts on the server, this session is dead.
    */
   async startSession() {
     const connection = getConnection();
@@ -286,7 +319,7 @@ class TransactionManager {
       // Ensure session is ended even on abort failure
       try {
         await session.endSession();
-      } catch (e) {
+      } catch {
         // Ignore cleanup errors
       }
       throw error;
@@ -294,22 +327,89 @@ class TransactionManager {
   }
 
   /**
-   * Execute a complete transaction with automatic retry
+   * Execute `operation` inside a multi-document MongoDB transaction.
+   *
+   * Retry semantics are split across two layers, both correct by construction:
+   *
+   *  1. Inner (per session): delegated to the driver's
+   *     `session.withTransaction()`. Per the drivers specification it starts
+   *     the transaction, aborts on failure, re-runs the callback once on a
+   *     TransientTransactionError, and retries the commit itself on
+   *     UnknownTransactionCommitResult.
+   *
+   *  2. Outer (across attempts): each attempt opens a FRESH session. A
+   *     transaction that has aborted on the server can never be revived on
+   *     its session — retrying inside one dead session (the previous
+   *     implementation) was guaranteed to fail every attempt and burn the
+   *     backoff budget for nothing.
+   *
+   * The original error is re-thrown as-is (never wrapped) so its driver error
+   * labels and numeric codes survive for upstream callers.
    */
   async withTransaction(operation, options = {}) {
-    const { session, transactionId } = await this.startSession();
-    
-    try {
-      const result = await this.withRetry(async () => {
-        return await operation(session);
-      }, options);
+    const maxAttempts = Math.max(1, options.maxRetries ?? this.maxRetries);
+    let lastError;
 
-      await this.commitTransaction(session, transactionId);
-      return result;
-    } catch (error) {
-      await this.abortTransaction(session, transactionId);
-      throw error;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const connection = getConnection();
+      const session = await connection.startSession();
+      const transactionId = ++this.transactionCounter;
+
+      this.activeTransactions.set(transactionId, {
+        id: transactionId,
+        session,
+        startedAt: new Date(),
+        operations: [],
+        attempt,
+      });
+
+      try {
+        const result = await session.withTransaction(
+          () => operation(session),
+          DEFAULT_TRANSACTION_OPTIONS,
+        );
+
+        this.activeTransactions.delete(transactionId);
+        logger.info('[TransactionManager] Transaction committed', {
+          transactionId,
+          attempt,
+        });
+        return result;
+      } catch (error) {
+        this.activeTransactions.delete(transactionId);
+        lastError = error;
+
+        if (!this.isRetryableError(error) || attempt >= maxAttempts) {
+          logger.error('[TransactionManager] Transaction failed', {
+            transactionId,
+            attempt,
+            maxAttempts,
+            retryable: this.isRetryableError(error),
+            error: error.message,
+          });
+          throw error;
+        }
+
+        const delay = this.calculateBackoff(attempt);
+        logger.warn('[TransactionManager] Transient error — retrying on a fresh session', {
+          transactionId,
+          attempt,
+          maxAttempts,
+          delay,
+          error: error.message,
+        });
+        await this.sleep(delay);
+      } finally {
+        // The session is single-use: end it whichever way the attempt went.
+        try {
+          await session.endSession();
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
     }
+
+    throw lastError;
   }
 
   /**
@@ -506,7 +606,7 @@ const transactionManager = new TransactionManager();
 /**
  * Helper: Execute debit operation safely
  */
-async function safeDebit(accountId, amount, options = {}) {
+async function safeDebit(accountId, amount, _options = {}) {
   const { session, transactionId } = await transactionManager.startSession();
   
   try {
@@ -567,7 +667,7 @@ async function safeDebit(accountId, amount, options = {}) {
 /**
  * Helper: Execute credit operation safely
  */
-async function safeCredit(accountId, amount, options = {}) {
+async function safeCredit(accountId, amount, _options = {}) {
   const { session, transactionId } = await transactionManager.startSession();
   
   try {
@@ -624,7 +724,7 @@ async function safeCredit(accountId, amount, options = {}) {
 /**
  * Helper: Execute atomic balance transfer
  */
-async function atomicTransfer(fromAccountId, toAccountId, amount, options = {}) {
+async function atomicTransfer(fromAccountId, toAccountId, amount, _options = {}) {
   const { session, transactionId } = await transactionManager.startSession();
   
   try {

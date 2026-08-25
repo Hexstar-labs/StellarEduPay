@@ -6,10 +6,15 @@
  * Acceptance criteria (from the bug report):
  *  - startSession() returns a session with an active transaction
  *    (i.e. session.startTransaction() is called before the session is returned)
- *  - withTransaction() commits the session when the operation succeeds
- *  - withTransaction() aborts the session when the operation throws
- *  - commitTransaction() and abortTransaction() succeed when a transaction is
- *    active (i.e. startTransaction was already called)
+ *  - withTransaction() delegates the transaction lifecycle to the driver's
+ *    session.withTransaction() instead of hand-rolling start/commit/abort
+ *  - withTransaction() opens a FRESH SESSION per retry attempt — a retried
+ *    operation is never re-run on an already-aborted transaction
+ *  - a TransientTransactionError on the first attempt is recovered: the second
+ *    attempt commits successfully
+ *  - isRetryableError() honours ONLY driver error labels and explicit numeric
+ *    codes; it never matches error-message substrings, so a non-transient
+ *    error whose message merely contains the word "transaction" is NOT retried
  */
 
 // ─── Env ─────────────────────────────────────────────────────────────────────
@@ -26,6 +31,43 @@ function makeSession() {
     abortTransaction:  jest.fn().mockResolvedValue(undefined),
     endSession:        jest.fn().mockResolvedValue(undefined),
   };
+}
+
+// A session that implements the driver's session.withTransaction() contract
+// (see the drivers specification): starts a transaction, runs the callback,
+// commits; on a TransientTransactionError it aborts and re-runs the callback
+// ONCE more on a fresh transaction within the same session; on any other
+// error it aborts and propagates immediately. This is exactly how the real
+// driver behaves — TransactionManager must be able to rely on it.
+function makeDriverSession() {
+  const s = makeSession();
+  s.withTransaction = jest.fn(async (fn) => {
+    let attempts = 0;
+    for (;;) {
+      attempts++;
+      s.startTransaction();
+      try {
+        const result = await fn(s);
+        await s.commitTransaction();
+        return result;
+      } catch (error) {
+        await s.abortTransaction();
+        const transient =
+          typeof error?.hasErrorLabel === 'function' &&
+          error.hasErrorLabel('TransientTransactionError');
+        if (transient && attempts < 2) continue;
+        throw error;
+      }
+    }
+  });
+  return s;
+}
+
+function transientError(message = 'WriteConflict during plan execution') {
+  const err = new Error(message);
+  err.hasErrorLabel = (label) => label === 'TransientTransactionError';
+  err.code = 112; // WriteConflict
+  return err;
 }
 
 // ─── Connection stub ─────────────────────────────────────────────────────────
@@ -229,35 +271,83 @@ describe('abortTransaction()', () => {
   });
 });
 
-describe('withTransaction()', () => {
-  let session;
-
-  beforeEach(() => {
-    session = makeSession();
-    mockConnection.startSession = jest.fn().mockResolvedValue(session);
+describe('isRetryableError()', () => {
+  test('retries when the error carries the TransientTransactionError label', () => {
+    const tm = makeTM();
+    const err = new Error('whatever');
+    err.hasErrorLabel = (l) => l === 'TransientTransactionError';
+    expect(tm.isRetryableError(err)).toBe(true);
   });
 
-  test('calls startTransaction() before invoking the operation', async () => {
+  test('retries when the error carries the UnknownTransactionCommitResult label', () => {
     const tm = makeTM();
-    let startedBeforeOp = false;
-    await tm.withTransaction(async () => {
-      startedBeforeOp = session.startTransaction.mock.calls.length === 1;
-    });
-    expect(startedBeforeOp).toBe(true);
+    const err = new Error('whatever');
+    err.hasErrorLabel = (l) => l === 'UnknownTransactionCommitResult';
+    expect(tm.isRetryableError(err)).toBe(true);
+  });
+
+  test.each([112, 189, 261])('retries explicit transient server code %i', (code) => {
+    const tm = makeTM();
+    expect(tm.isRetryableError({ code })).toBe(true);
+  });
+
+  test('does NOT retry an error whose message merely contains "transaction"', () => {
+    const tm = makeTM();
+    const err = new Error('cannot infer query fields in transaction');
+    expect(tm.isRetryableError(err)).toBe(false);
+  });
+
+  test('does NOT retry an error whose message merely contains "Lock"', () => {
+    const tm = makeTM();
+    expect(tm.isRetryableError(new Error('LockBusy: collection is locked'))).toBe(false);
+  });
+
+  test('does NOT retry an error whose message contains "WriteConflict" without label or code', () => {
+    const tm = makeTM();
+    expect(tm.isRetryableError(new Error('WriteConflict in plan executor'))).toBe(false);
+  });
+
+  test('does NOT retry a message that literally says "TransientTransactionError" without the label', () => {
+    const tm = makeTM();
+    const err = new Error('TransientTransactionError occurred'); // text only — no label fn
+    expect(tm.isRetryableError(err)).toBe(false);
+  });
+
+  test('does not retry generic errors', () => {
+    const tm = makeTM();
+    expect(tm.isRetryableError(new Error('validation failed'))).toBe(false);
+  });
+
+  test('handles null/undefined without throwing', () => {
+    const tm = makeTM();
+    expect(tm.isRetryableError(null)).toBe(false);
+    expect(tm.isRetryableError(undefined)).toBe(false);
+  });
+});
+
+describe('withTransaction()', () => {
+  beforeEach(() => {
+    mockConnection.startSession = jest.fn().mockResolvedValue(makeDriverSession());
+  });
+
+  test('delegates the transaction lifecycle to session.withTransaction()', async () => {
+    const tm = makeTM();
+    const session = makeDriverSession();
+    mockConnection.startSession.mockResolvedValueOnce(session);
+
+    await tm.withTransaction(async () => 'ok');
+
+    expect(session.withTransaction).toHaveBeenCalledTimes(1);
   });
 
   test('passes the session to the operation callback', async () => {
     const tm = makeTM();
+    const session = makeDriverSession();
+    mockConnection.startSession.mockResolvedValueOnce(session);
+
     let receivedSession;
     await tm.withTransaction(async (sess) => { receivedSession = sess; });
     expect(receivedSession).toBe(session);
-  });
-
-  test('commits the session when the operation succeeds', async () => {
-    const tm = makeTM();
-    await tm.withTransaction(async () => 'ok');
-    expect(session.commitTransaction).toHaveBeenCalledTimes(1);
-    expect(session.abortTransaction).not.toHaveBeenCalled();
   });
 
   test('returns the value produced by the operation', async () => {
@@ -266,55 +356,117 @@ describe('withTransaction()', () => {
     expect(result).toEqual({ data: 42 });
   });
 
-  test('aborts the session when the operation throws', async () => {
+  test('ends the session after a successful run', async () => {
     const tm = makeTM();
-    await expect(
-      tm.withTransaction(async () => { throw new Error('operation failed'); })
-    ).rejects.toThrow('operation failed');
-    expect(session.abortTransaction).toHaveBeenCalledTimes(1);
-    expect(session.commitTransaction).not.toHaveBeenCalled();
+    const session = makeDriverSession();
+    mockConnection.startSession.mockResolvedValueOnce(session);
+
+    await tm.withTransaction(async () => 'ok');
+
+    expect(session.endSession).toHaveBeenCalledTimes(1);
+    expect(session.commitTransaction).toHaveBeenCalledTimes(1);
+    expect(session.abortTransaction).not.toHaveBeenCalled();
   });
 
-  test('re-throws the original error after aborting', async () => {
-    const tm = makeTM();
+  test('ends the session after a failed run and re-throws the original error', async () => {
+    const tm = makeTM({ maxRetries: 1 });
+    const session = makeDriverSession();
+    mockConnection.startSession.mockResolvedValueOnce(session);
+
     const boom = new Error('boom');
     await expect(tm.withTransaction(async () => { throw boom; })).rejects.toBe(boom);
+
+    expect(session.abortTransaction).toHaveBeenCalledTimes(1);
+    expect(session.endSession).toHaveBeenCalledTimes(1);
   });
 
-  test('leaves no active transactions after a successful run', async () => {
-    const tm = makeTM();
+  test('leaves no active transactions after success or failure', async () => {
+    const tm = makeTM({ maxRetries: 1 });
     await tm.withTransaction(async () => {});
     expect(tm.getActiveTransactionCount()).toBe(0);
-  });
 
-  test('leaves no active transactions after a failed run', async () => {
-    const tm = makeTM();
     await expect(
       tm.withTransaction(async () => { throw new Error('err'); })
     ).rejects.toThrow();
     expect(tm.getActiveTransactionCount()).toBe(0);
   });
 
-  test('retries on TransientTransactionError and eventually succeeds', async () => {
-    const tm = makeTM({ maxRetries: 3 });
+  // ── Acceptance criterion: transient error on attempt #1, commit on #2 ──
+
+  test('recovers from a TransientTransactionError on the first attempt', async () => {
+    const tm = makeTM();
+    const session = makeDriverSession(); // driver-level retry, same session, fresh transaction
+    mockConnection.startSession.mockResolvedValueOnce(session);
+
     let attempts = 0;
-
-    const failSession = makeSession();
-    const okSession   = makeSession();
-    mockConnection.startSession
-      .mockResolvedValueOnce(failSession)
-      .mockResolvedValueOnce(okSession);
-
-    const transientErr      = new Error('TransientTransactionError occurred');
-    transientErr.hasErrorLabel = (label) => label === 'TransientTransactionError';
-
     const result = await tm.withTransaction(async () => {
       attempts++;
-      if (attempts === 1) throw transientErr;
+      if (attempts === 1) throw transientError();
       return 'success';
     });
 
     expect(result).toBe('success');
     expect(attempts).toBe(2);
+    // The driver started TWO transactions inside withTransaction…
+    expect(session.startTransaction).toHaveBeenCalledTimes(2);
+    // …aborted the first…
+    expect(session.abortTransaction).toHaveBeenCalledTimes(1);
+    // …and committed the second.
+    expect(session.commitTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  test('opens a FRESH SESSION for each outer retry once the driver retry is exhausted', async () => {
+    const tm = makeTM({ maxRetries: 3, retryDelayMs: 1 });
+    const deadSession   = makeDriverSession(); // both driver-internal attempts fail
+    const healthySession = makeDriverSession();
+    mockConnection.startSession
+      .mockResolvedValueOnce(deadSession)
+      .mockResolvedValueOnce(healthySession);
+
+    let calls = 0;
+    const result = await tm.withTransaction(async () => {
+      calls++;
+      if (calls <= 2) throw transientError();
+      return 'recovered';
+    });
+
+    expect(result).toBe('recovered');
+    // Two distinct sessions were opened — the retried operation was never
+    // re-run against the aborted first session.
+    expect(mockConnection.startSession).toHaveBeenCalledTimes(2);
+    expect(deadSession.endSession).toHaveBeenCalledTimes(1);
+    expect(healthySession.endSession).toHaveBeenCalledTimes(1);
+    expect(healthySession.commitTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  test('does NOT retry a non-transient error even when its message mentions "transaction"', async () => {
+    const tm = makeTM({ maxRetries: 3 });
+    const session = makeDriverSession();
+    mockConnection.startSession.mockResolvedValueOnce(session);
+
+    const nonTransient = new Error('cannot infer query fields in transaction');
+    let calls = 0;
+    await expect(
+      tm.withTransaction(async () => { calls++; throw nonTransient; })
+    ).rejects.toBe(nonTransient);
+
+    expect(calls).toBe(1);                              // no second attempt
+    expect(mockConnection.startSession).toHaveBeenCalledTimes(1); // no new session opened
+  });
+
+  test('throws the ORIGINAL error after exhausting retries (labels preserved)', async () => {
+    const tm = makeTM({ maxRetries: 2, retryDelayMs: 1 });
+    const session = makeDriverSession();
+    mockConnection.startSession.mockResolvedValue(session);
+
+    const original = transientError('WriteConflict during plan execution and update');
+    let calls = 0;
+    await expect(
+      tm.withTransaction(async () => { calls++; throw original; })
+    ).rejects.toBe(original);
+
+    // 2 sessions × up to 2 driver-internal attempts each
+    expect(calls).toBe(4);
+    expect(mockConnection.startSession).toHaveBeenCalledTimes(2);
   });
 });
