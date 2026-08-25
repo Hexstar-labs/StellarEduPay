@@ -36,48 +36,23 @@ async function resolveSchool(req, res, next) {
       });
     }
 
-    let school;
-    let cacheKey;
+    const lookupKey = schoolId ? schoolId : schoolSlug.toLowerCase().trim();
+    const cacheKey = cache.KEYS.school ? cache.KEYS.school(lookupKey) : `school:${lookupKey}`;
 
-    if (schoolId) {
-      cacheKey = cache.KEYS.school ? cache.KEYS.school(schoolId) : `school:${schoolId}`;
-      school = cache.get(cacheKey);
+    let school = cache.get(cacheKey);
 
-      if (school) {
-        // Re-confirm isActive from DB on every cache hit to prevent stale entries
-        // from bypassing deactivation (e.g. when isActive is flipped outside the
-        // normal controller path or before the cache TTL expires).
-        const live = await School.findOne({ schoolId }, { isActive: 1 }).lean();
-        if (!live || !live.isActive) {
-          cache.del(cacheKey);
-          school = null;
+    if (!school) {
+      const query = schoolId ? { schoolId } : { slug: lookupKey };
+      school = await School.findOne(query).lean();
+      if (school && school.isActive) {
+        const ttl = cache.TTL.SCHOOL || 300;
+        if (school.schoolId) {
+          const idKey = cache.KEYS.school ? cache.KEYS.school(school.schoolId) : `school:${school.schoolId}`;
+          cache.set(idKey, school, ttl);
         }
-      }
-
-      if (!school) {
-        school = await School.findOne({ schoolId }).lean();
-        if (school && school.isActive) {
-          cache.set(cacheKey, school, cache.TTL.SCHOOL || 300);
-        }
-      }
-    } else {
-      const slug = schoolSlug.toLowerCase().trim();
-      cacheKey = cache.KEYS.school ? cache.KEYS.school(slug) : `school:${slug}`;
-      school = cache.get(cacheKey);
-
-      if (school) {
-        // Re-confirm isActive from DB on every cache hit.
-        const live = await School.findOne({ slug }, { isActive: 1 }).lean();
-        if (!live || !live.isActive) {
-          cache.del(cacheKey);
-          school = null;
-        }
-      }
-
-      if (!school) {
-        school = await School.findOne({ slug }).lean();
-        if (school && school.isActive) {
-          cache.set(cacheKey, school, cache.TTL.SCHOOL || 300);
+        if (school.slug) {
+          const slugKey = cache.KEYS.school ? cache.KEYS.school(school.slug) : `school:${school.slug}`;
+          cache.set(slugKey, school, ttl);
         }
       }
     }

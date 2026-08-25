@@ -5,6 +5,7 @@ const speakeasy = require('speakeasy');
 const School = require('../models/schoolModel');
 const { logAudit } = require('../services/auditService');
 const logger = require('../utils/logger');
+const schoolCache = require('../services/schoolCacheInvalidator');
 
 // ── MFA secret encryption (AES-256-GCM) ──────────────────────────────────────
 // Key is derived from JWT_SECRET so no extra env var is needed.
@@ -123,6 +124,7 @@ async function setupMfa(req, res) {
     school.mfaSecret = encryptMfaSecret(totpSecret);
     school.mfaBackupCodes = backupCodes.map((c) => ({ hash: hashBackupCode(c), used: false }));
     await school.save();
+    schoolCache.invalidate(school);
 
     // #1180 — Audit credential generation so every setup attempt is traceable.
     await logAudit({
@@ -191,15 +193,17 @@ async function verifyAndEnableMfa(req, res) {
       return res.status(400).json({ error: 'Invalid TOTP code.', code: 'INVALID_MFA_CODE' });
     }
 
-    await School.findOneAndUpdate(
+    const updatedSchool = await School.findOneAndUpdate(
       { slug },
       {
         $set: {
           mfaEnabled: true,
           mfaSecret: encryptMfaSecret(verifySecret),
         },
-      }
+      },
+      { new: true }
     );
+    if (updatedSchool) schoolCache.invalidate(updatedSchool);
 
     await logAudit({
       schoolId: school.schoolId || slug,
@@ -255,10 +259,12 @@ async function disableMfa(req, res) {
       return res.status(400).json({ error: 'Invalid TOTP code.', code: 'INVALID_MFA_CODE' });
     }
 
-    await School.findOneAndUpdate(
+    const updatedSchool = await School.findOneAndUpdate(
       { slug },
-      { $set: { mfaEnabled: false, mfaSecret: null, mfaBackupCodes: [] } }
+      { $set: { mfaEnabled: false, mfaSecret: null, mfaBackupCodes: [] } },
+      { new: true }
     );
+    if (updatedSchool) schoolCache.invalidate(updatedSchool);
 
     await logAudit({
       schoolId: school.schoolId || slug,
