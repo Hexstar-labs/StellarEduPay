@@ -1,7 +1,23 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const mongoose = require('mongoose');
-const migration = require('../backend/migrations/015_add_school_webhook_secret');
+
+// Resolve the migration by its descriptive name rather than by ordinal. The
+// migration was renumbered (015 → 017) during a concurrent-branch rebase, and
+// its number is expected to change again; keying off the `_add_school_webhook_secret`
+// slug survives any renumbering. See issue #1290.
+const MIGRATIONS_DIR = path.join(__dirname, '../backend/migrations');
+const migrationFile = fs
+  .readdirSync(MIGRATIONS_DIR)
+  .find(f => f.endsWith('.js') && f.includes('add_school_webhook_secret'));
+
+if (!migrationFile) {
+  throw new Error('Could not locate the school webhook-secret migration by name');
+}
+
+const migration = require(path.join(MIGRATIONS_DIR, migrationFile));
 
 // In CI a real MongoDB service is available via MONGO_URI — use it directly to
 // avoid MongoMemoryServer downloading a binary (blocked by blockRealHttp.js).

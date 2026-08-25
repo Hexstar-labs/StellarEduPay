@@ -13,7 +13,7 @@
     "seed": "node ../scripts/seed-test-data.js",
     "create-wallet": "node ../scripts/create-school-wallet.js",
     "lint": "eslint src/ tests/ scripts/",
-    "test": "jest --testPathPattern=tests/"
+    "test": "jest --roots=<rootDir>/tests --forceExit"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^12.0.0",
