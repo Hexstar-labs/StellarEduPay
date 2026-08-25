@@ -17,6 +17,7 @@ recommendation.
 | Rate limiting       | `middleware/rateLimiter.js`         | Shared rate-limit counters across replicas|
 | Refresh-token store | auth/session layer                  | Refresh-token validity / revocation       |
 | Distributed locks   | `services/distributedLock.js`       | Single-processing of a school's sync      |
+| **Webhook nonce store** | `services/webhookService.js`    | **Inbound delivery replay deduplication** |
 
 ## Degradation modes
 
@@ -29,6 +30,7 @@ Each consumer has a defined behaviour when Redis is unavailable:
 | Retry queue       | Initialization failure is surfaced loudly in logs and via `/health` (`retryQueue.status: failed`); the HTTP server still boots. Without `REDIS_HOST` the MongoDB backend is used (single-replica only — see [retry-backends.md](./retry-backends.md)). |
 | Rate limiting     | Counters become in-process per replica (not shared); limits still apply locally. A loud startup warning is emitted for the MongoDB/in-process path. |
 | Refresh tokens    | Validation degrades; treat as fail-closed for session issuance.                 |
+| **Webhook nonce store** | **Fail closed** — when Redis is unavailable (not configured, not ready, or returns an error during a nonce write), `_isReplay()` returns `true` so the delivery is **rejected** rather than allowed through with no dedup guarantee. This prevents a Redis outage from silently degrading replay protection from "cluster-wide" to "per-replica" in multi-replica deployments (`deploy/k8s/backend-deployment.yaml` sets `replicas: 2`). A warning is logged on every rejection: `Redis unavailable in _isReplay — failing closed`. **Operational impact:** while Redis is down, all inbound webhook deliveries that pass HMAC verification will be rejected with a replay error. Senders should retry once Redis is healthy. To restore the previous in-process-fallback behaviour (single-process dev/test environments only), set `WEBHOOK_REPLAY_NONCES_LOCAL=true`. |
 
 The guiding principle: **anything guarding correctness (locks, dedup) fails
 closed; anything best-effort (SSE) degrades to local.**

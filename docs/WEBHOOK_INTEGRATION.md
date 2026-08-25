@@ -47,6 +47,8 @@ Your endpoint receives `POST` requests with a JSON body:
 | `payment.failed` | Payment failed on Stellar network |
 | `payment.suspicious` | Flagged by fraud detection |
 
+---
+
 ## Security: verifying the signature
 
 Every delivery is signed with HMAC-SHA256 using your school's secret. Always verify the signature before processing the event.
@@ -55,39 +57,62 @@ Every delivery is signed with HMAC-SHA256 using your school's secret. Always ver
 
 | Header | Example | Purpose |
 |--------|---------|---------|
-| `X-StellarEduPay-Signature` | `sha256=a1b2c3...` | HMAC-SHA256 of the entire JSON body |
+| `X-StellarEduPay-Signature-V2` | `sha256=a1b2c3...` | **V2 HMAC-SHA256** covering timestamp, delivery-ID, and body (recommended) |
+| `X-StellarEduPay-Signature` | `sha256=d4e5f6...` | V1 HMAC-SHA256 of the JSON body only (deprecated — use V2) |
 | `X-StellarEduPay-Timestamp` | `1711532400` | Unix timestamp (seconds) of delivery |
 | `X-StellarEduPay-Delivery-ID` | `550e8400-...` | Unique delivery UUID for idempotency |
 
-### Signature algorithm
+---
 
-The signature is computed over the **serialised JSON body** (the exact bytes you receive):
+## V2 Signature algorithm (recommended)
+
+The V2 signature closes the replay-attack vector present in V1. It covers the
+timestamp, the delivery-ID, **and** the exact body bytes in one signed string:
 
 ```
-HMAC-SHA256(secret, JSON.stringify(body))
+signing_base  = timestamp + "." + deliveryId + "." + rawBody
+signature_v2  = HMAC-SHA256(secret, signing_base)
+header_value  = "sha256=" + hex(signature_v2)
 ```
 
-The header value is `sha256=<hex-digest>`.
+Where:
+- `timestamp` is the value in `X-StellarEduPay-Timestamp` (Unix seconds, as a string)
+- `deliveryId` is the value in `X-StellarEduPay-Delivery-ID`
+- `rawBody` is the **exact bytes** of the HTTP request body
 
-### Verification recipe (Node.js)
+Because the timestamp and delivery-ID are now bound to the signature, an attacker
+who captures a delivery cannot replay it by rewriting either header — the
+signature check will fail.
+
+> **Important:** compute the V2 signing base from the raw request body bytes
+> (the exact bytes received over the wire). Do **not** re-serialise a parsed JS
+> object; key-ordering differences will break the signature.
+
+### Verification recipe (Node.js) — V2
 
 ```js
 const crypto = require('crypto');
 
-function verifyWebhook(rawBody, headers, secret) {
-  // 1. Reject stale deliveries (replay protection — 5 min tolerance)
+const TOLERANCE_S = 300; // 5 minutes
+
+function verifyWebhookV2(rawBody, headers, secret) {
+  // 1. Parse and range-check the timestamp
   const ts = parseInt(headers['x-stellaredupay-timestamp'], 10);
-  if (Math.abs(Date.now() / 1000 - ts) > 300) {
+  if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > TOLERANCE_S) {
     return { valid: false, reason: 'timestamp out of tolerance' };
   }
 
-  // 2. Verify HMAC — use constant-time comparison to prevent timing attacks
-  const [, provided] = (headers['x-stellaredupay-signature'] || '').split('sha256=');
-  if (!provided) return { valid: false, reason: 'missing signature' };
+  // 2. Extract the V2 signature
+  const deliveryId = headers['x-stellaredupay-delivery-id'] || '';
+  const [, provided] = (headers['x-stellaredupay-signature-v2'] || '').split('sha256=');
+  if (!provided) return { valid: false, reason: 'missing V2 signature' };
 
-  const body = typeof rawBody === 'string' ? rawBody : JSON.stringify(rawBody);
-  const expected = crypto.createHmac('sha256', secret).update(body).digest('hex');
+  // 3. Recompute over timestamp.deliveryId.rawBody
+  const body = typeof rawBody === 'string' ? rawBody : rawBody.toString();
+  const signingBase = `${ts}.${deliveryId}.${body}`;
+  const expected = crypto.createHmac('sha256', secret).update(signingBase).digest('hex');
 
+  // 4. Constant-time comparison
   const expectedBuf = Buffer.from(expected, 'hex');
   const providedBuf = Buffer.from(provided, 'hex');
   if (expectedBuf.length !== providedBuf.length) {
@@ -101,37 +126,152 @@ function verifyWebhook(rawBody, headers, secret) {
 }
 ```
 
-> **Important:** parse the raw request body as a `Buffer` or `string` — do not re-serialise a parsed JS object, as key ordering may differ and the signature will not match.
-
-### Verification recipe (Python)
+### Verification recipe (Python) — V2
 
 ```python
-import hashlib, hmac, time
+import hashlib
+import hmac
+import time
 
-def verify_webhook(raw_body: bytes, headers: dict, secret: str) -> bool:
-    # Reject stale deliveries
-    ts = int(headers.get('x-stellaredupay-timestamp', 0))
-    if abs(time.time() - ts) > 300:
+TOLERANCE_S = 300  # 5 minutes
+
+def verify_webhook_v2(raw_body: bytes, headers: dict, secret: str) -> bool:
+    # 1. Parse and range-check the timestamp
+    try:
+        ts = int(headers.get('x-stellaredupay-timestamp', '0'))
+    except ValueError:
+        return False
+    if abs(time.time() - ts) > TOLERANCE_S:
         return False
 
-    provided = headers.get('x-stellaredupay-signature', '').removeprefix('sha256=')
-    expected = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+    # 2. Extract the V2 signature
+    delivery_id = headers.get('x-stellaredupay-delivery-id', '')
+    sig_header = headers.get('x-stellaredupay-signature-v2', '')
+    if not sig_header.startswith('sha256='):
+        return False
+    provided = sig_header.removeprefix('sha256=')
+
+    # 3. Recompute over timestamp.deliveryId.rawBody
+    body_str = raw_body.decode('utf-8') if isinstance(raw_body, bytes) else raw_body
+    signing_base = f'{ts}.{delivery_id}.{body_str}'.encode('utf-8')
+    expected = hmac.new(secret.encode('utf-8'), signing_base, hashlib.sha256).hexdigest()
+
+    # 4. Constant-time comparison
     return hmac.compare_digest(expected, provided)
 ```
 
+### Verification recipe (Java) — V2
+
+```java
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+
+public class WebhookVerifier {
+
+    private static final int TOLERANCE_S = 300; // 5 minutes
+
+    public static boolean verifyV2(
+            byte[] rawBody,
+            String timestampHeader,
+            String deliveryIdHeader,
+            String signatureV2Header,
+            String secret) throws Exception {
+
+        // 1. Parse and range-check the timestamp
+        long ts = Long.parseLong(timestampHeader);
+        if (Math.abs(System.currentTimeMillis() / 1000L - ts) > TOLERANCE_S) {
+            return false;
+        }
+
+        // 2. Extract the V2 signature
+        if (!signatureV2Header.startsWith("sha256=")) return false;
+        String provided = signatureV2Header.substring(7);
+
+        // 3. Recompute over timestamp.deliveryId.rawBody
+        String bodyStr = new String(rawBody, StandardCharsets.UTF_8);
+        String signingBase = ts + "." + deliveryIdHeader + "." + bodyStr;
+
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        byte[] expectedBytes = mac.doFinal(signingBase.getBytes(StandardCharsets.UTF_8));
+        String expected = HexFormat.of().formatHex(expectedBytes);
+
+        // 4. Constant-time comparison
+        byte[] expectedBuf = expected.getBytes(StandardCharsets.UTF_8);
+        byte[] providedBuf = provided.getBytes(StandardCharsets.UTF_8);
+        return MessageDigest.isEqual(expectedBuf, providedBuf);
+    }
+}
+```
+
+---
+
+## V1 Signature algorithm (deprecated)
+
+> **V1 is deprecated.** It signs only the JSON body, leaving the timestamp and
+> delivery-ID unsigned. An attacker who captures one delivery can replay it with
+> a rewritten `X-StellarEduPay-Timestamp` header, bypassing the tolerance check.
+> Migrate to V2 before the V1 removal date (see [Migration guide](#migration-guide-v1--v2) below).
+
+The V1 signature is included on every delivery during the transition window so
+existing integrators are not immediately broken. It will be removed in a future
+release.
+
+```
+signature_v1 = HMAC-SHA256(secret, JSON.stringify(body))
+header_value = "sha256=" + hex(signature_v1)
+```
+
+---
+
+## Migration guide: V1 → V2
+
+The V2 header (`X-StellarEduPay-Signature-V2`) is present on all deliveries
+**now**. V1 (`X-StellarEduPay-Signature`) will continue to be sent in parallel
+during the migration window to give you time to update your receiver.
+
+**Migration steps:**
+
+1. Update your signature-verification code to use `X-StellarEduPay-Signature-V2`
+   with the new signing base `timestamp.deliveryId.rawBody` (examples above).
+2. Ensure you read the raw request body bytes before parsing — many frameworks
+   expose a `rawBody` buffer or middleware option (e.g. `express.raw()` or
+   `bodyParser` with a `verify` hook).
+3. Deploy and verify that your receiver accepts V2-signed deliveries in
+   staging/pre-production.
+4. Remove your V1 verification path.
+
+**V1 removal date:** V1 signatures will be dropped after **2027-02-28**.
+You will receive advance notice via the developer changelog and email.
+
+> **Dual-signature transition period:** between now and the V1 removal date,
+> every delivery carries both `X-StellarEduPay-Signature` (V1) and
+> `X-StellarEduPay-Signature-V2`. Once you have migrated, verify only V2 and
+> ignore V1.
+
+---
+
 ## Replay protection
 
-Use the `X-StellarEduPay-Delivery-ID` header as an idempotency key. Store the delivery IDs you have already processed and reject any request whose ID you have seen before:
+Use both the timestamp tolerance check **and** the delivery-ID as an idempotency
+key. The V2 signature binds the timestamp and delivery-ID to the HMAC, so a
+forged or rewritten header will fail the signature check. The delivery-ID
+deduplication is a second, independent guard against exact replays.
 
 ```js
 const processedIds = new Set(); // use Redis or a database for durability
 
 app.post('/webhook', (req, res) => {
+  const { valid, reason } = verifyWebhookV2(req.rawBody, req.headers, WEBHOOK_SECRET);
+  if (!valid) {
+    console.error('Webhook verification failed:', reason);
+    return res.status(401).end();
+  }
+
   const deliveryId = req.headers['x-stellaredupay-delivery-id'];
-
-  const { valid } = verifyWebhook(req.rawBody, req.headers, WEBHOOK_SECRET);
-  if (!valid) return res.status(401).end();
-
   if (processedIds.has(deliveryId)) {
     return res.status(200).json({ status: 'duplicate, ignored' });
   }
@@ -141,6 +281,11 @@ app.post('/webhook', (req, res) => {
   res.status(200).end();
 });
 ```
+
+> **Durability:** store delivery IDs in Redis or a database (not a process-local
+> Set) so replay protection survives restarts and works across multiple replicas.
+
+---
 
 ## Acknowledge quickly
 
