@@ -1,8 +1,7 @@
-"use strict";
+'use strict';
 
-const express = require("express");
-const router = express.Router();
-const { requireSchoolAuth } = require('../middleware/auth');
+const express = require('express');
+const { requireAdminAuth, requireSchoolAuth } = require('../middleware/auth');
 
 const {
   getPaymentInstructions,
@@ -56,12 +55,13 @@ const {
   validateCreatePaymentIntent,
   validateVerifyPayment,
   validateSubmitTransaction,
-} = require("../middleware/validate");
-const { resolveSchool } = require("../middleware/schoolContext");
-const idempotencyMiddleware = require("../middleware/idempotency");
-const { requireAdminAuth, requireSchoolAuth } = require("../middleware/auth");
-const { auditContext } = require("../middleware/auditContext");
-const { strictLimiter, verifyLimiter } = require("../middleware/rateLimiter");
+} = require('../middleware/validate');
+const { resolveSchool } = require('../middleware/schoolContext');
+const idempotencyMiddleware = require('../middleware/idempotency');
+const { auditContext } = require('../middleware/auditContext');
+const { strictLimiter, verifyLimiter } = require('../middleware/rateLimiter');
+
+const router = express.Router();
 
 // Idempotency middleware for critical payment endpoints that must fail-closed
 // when the datastore becomes unreachable to prevent duplicate submissions.
