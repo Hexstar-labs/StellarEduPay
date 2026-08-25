@@ -66,6 +66,13 @@ jobs:
       - uses: actions/checkout@v7
       - run: node scripts/validate-migrations.js
 
+  orphan-dirs:
+    name: Check for stray duplicate directories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: node scripts/check-orphan-dirs.js
+
   lint-backend:
     name: Lint backend
     runs-on: ubuntu-latest
