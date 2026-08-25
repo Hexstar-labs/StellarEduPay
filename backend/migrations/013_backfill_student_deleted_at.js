@@ -9,6 +9,8 @@
 
 const mongoose = require('mongoose');
 
+const VERSION = '013_backfill_student_deleted_at';
+
 async function up() {
   const db = mongoose.connection.db;
   const result = await db.collection('students').updateMany(
@@ -27,4 +29,4 @@ async function down() {
   console.log(`[Migration 012] Removed deletedAt from ${result.modifiedCount} students`);
 }
 
-module.exports = { up, down };
+module.exports = { version: VERSION, up, down };

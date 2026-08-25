@@ -20,8 +20,12 @@ async function up() {
   const collection = mongoose.connection.collection('idempotencykeys');
 
   // Drop any existing TTL index on createdAt so we can (re)create it with
-  // the correct expireAfterSeconds value.
-  const indexes = await collection.indexes();
+  // the correct expireAfterSeconds value. indexes() throws NamespaceNotFound
+  // (code 26) on a collection that has never been created — nothing to drop.
+  const indexes = await collection.indexes().catch((err) => {
+    if (err.code === 26) return [];
+    throw err;
+  });
   for (const idx of indexes) {
     if (idx.key && idx.key.createdAt !== undefined && idx.expireAfterSeconds !== undefined) {
       await collection.dropIndex(idx.name);
@@ -35,7 +39,10 @@ async function up() {
 
 async function down() {
   const collection = mongoose.connection.collection('idempotencykeys');
-  const indexes = await collection.indexes();
+  const indexes = await collection.indexes().catch((err) => {
+    if (err.code === 26) return [];
+    throw err;
+  });
   for (const idx of indexes) {
     if (idx.key && idx.key.createdAt !== undefined && idx.expireAfterSeconds !== undefined) {
       await collection.dropIndex(idx.name);

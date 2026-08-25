@@ -190,12 +190,17 @@ paymentSchema.index({ schoolId: 1, feeValidationStatus: 1 });
 paymentSchema.index({ schoolId: 1, isSuspicious: 1 });
 paymentSchema.index({ schoolId: 1, confirmationStatus: 1 });
 paymentSchema.index({ confirmationState: 1 });
-// Partial compound index for report queries: filters out orphaned/deleted
+// Partial compound index for report queries: filters out soft-deleted
 // payments so MongoDB only indexes documents that appear in aggregation
-// results, keeping the index lean and report queries fast.
+// results, keeping the index lean and report queries fast. The
+// studentDeleted clause used by the application-level query is intentionally
+// not part of this filter — MongoDB partial index filters don't support
+// $ne, so "studentDeleted !== true" cannot be expressed directly (see
+// migrations/015_add_payment_report_index.js, which creates the equivalent
+// named index used in production).
 paymentSchema.index(
   { schoolId: 1, status: 1, confirmedAt: -1 },
-  { partialFilterExpression: { studentDeleted: { $ne: true }, deletedAt: null } }
+  { partialFilterExpression: { deletedAt: null } }
 );
 paymentSchema.index({ schoolId: 1, studentId: 1, feeCategory: 1 });
 

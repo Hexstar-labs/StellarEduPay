@@ -7,9 +7,15 @@
  * and sorts by confirmedAt.  Without a covering index MongoDB performs a full
  * collection scan for every report or dashboard request.
  *
- * The partial filter expression limits the index to documents that are
- * not orphaned (studentDeleted !== true) and not soft-deleted (deletedAt === null),
- * which matches the filter used in generateReport and getDashboardMetrics.
+ * The partial filter expression limits the index to documents that are not
+ * soft-deleted (deletedAt === null). It intentionally omits the
+ * studentDeleted clause used by the application-level query: MongoDB
+ * partial index filters only support $eq/$exists(true)/$gt/$gte/$lt/$lte/
+ * $type/$and, not $ne, so "studentDeleted !== true" cannot be expressed
+ * directly. The application still filters studentDeleted at query time —
+ * this index is simply somewhat less selective (it also covers orphaned
+ * payments) but remains usable and correct for generateReport and
+ * getDashboardMetrics.
  *
  * For 50 000 payment records this reduces generateReport from several seconds
  * to under 500 ms.
@@ -25,7 +31,7 @@ const VERSION = '014_add_payment_report_index';
 const INDEX_KEYS  = { schoolId: 1, status: 1, confirmedAt: -1 };
 const OLD_NAME    = 'schoolId_1_status_1_confirmedAt_-1';
 const NEW_NAME    = 'schoolId_1_status_1_confirmedAt_-1_partial';
-const PARTIAL_EXP = { studentDeleted: { $ne: true }, deletedAt: null };
+const PARTIAL_EXP = { deletedAt: null };
 
 async function up() {
   const collection = mongoose.connection.collection('payments');
@@ -50,7 +56,7 @@ async function up() {
 
   console.log(
     `[Migration 014] Created partial index "${NEW_NAME}" on payments ` +
-    `(partialFilterExpression: studentDeleted≠true, deletedAt=null)`
+    `(partialFilterExpression: deletedAt=null)`
   );
 }
 

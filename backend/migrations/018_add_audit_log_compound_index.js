@@ -11,6 +11,8 @@
 
 const mongoose = require('mongoose');
 
+const VERSION = '018_add_audit_log_compound_index';
+
 async function up() {
   const db = mongoose.connection.db;
   const collection = db.collection('auditlogs');
@@ -54,4 +56,4 @@ async function down() {
   }
 }
 
-module.exports = { up, down };
+module.exports = { version: VERSION, up, down };

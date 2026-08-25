@@ -11,6 +11,8 @@
 
 const mongoose = require('mongoose');
 
+const VERSION = '022_create_reminder_logs';
+
 async function up() {
   const db = mongoose.connection.db;
   const collectionName = 'reminderlogs';
@@ -84,4 +86,4 @@ async function down() {
   }
 }
 
-module.exports = { up, down };
+module.exports = { version: VERSION, up, down };

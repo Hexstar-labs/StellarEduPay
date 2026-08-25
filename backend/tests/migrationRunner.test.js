@@ -30,12 +30,24 @@ jest.mock('../src/config/database', () => ({
 let mockFiles = [];
 let mockExists = true;
 
-jest.spyOn(fs, 'existsSync').mockImplementation(() => mockExists);
-jest.spyOn(fs, 'readdirSync').mockImplementation(() => mockFiles);
+const MIGRATIONS_DIR = path.resolve(__dirname, '../migrations');
+
+// Scope the fs mocks to MIGRATIONS_DIR only, falling back to the real fs
+// implementation for every other path. An unconditional mock here would also
+// intercept Babel/Jest's own internal fs.existsSync calls (e.g. looking up
+// babel.config.js) made while lazily transforming migrationRunner.js on the
+// require() below, producing spurious "Cannot find module" failures
+// unrelated to this suite.
+const realExistsSync = fs.existsSync.bind(fs);
+const realReaddirSync = fs.readdirSync.bind(fs);
+jest.spyOn(fs, 'existsSync').mockImplementation(
+  (p) => (p === MIGRATIONS_DIR ? mockExists : realExistsSync(p)),
+);
+jest.spyOn(fs, 'readdirSync').mockImplementation(
+  (p) => (p === MIGRATIONS_DIR ? mockFiles : realReaddirSync(p)),
+);
 
 const { runMigrations, rollback } = require('../src/services/migrationRunner');
-
-const MIGRATIONS_DIR = path.resolve(__dirname, '../migrations');
 
 function makeRequire(files) {
   const map = Object.fromEntries(
@@ -68,6 +80,15 @@ describe('runMigrations — missing migrations directory', () => {
     mockExists = true;
     mockFiles = [];
     await expect(runMigrations(makeRequire([]))).resolves.toBeUndefined();
+  });
+
+  // Regression test for the dropped `_db` parameter (issue #1268): calling
+  // runMigrations() with zero arguments must acquire its own database handle
+  // via config/database rather than throwing a ReferenceError.
+  it('invoked with zero arguments does not throw', async () => {
+    mockExists = true;
+    mockFiles = [];
+    await expect(runMigrations()).resolves.toBeUndefined();
   });
 });
 

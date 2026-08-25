@@ -1,58 +1,58 @@
-/**
- * Migration: Add performance indexes to Student collection
- * 
- * Ensures { schoolId: 1, class: 1 } and { schoolId: 1, feePaid: 1 } indexes
- * exist for class-based and payment status queries.
- * 
- * Run with: node backend/migrations/002_add_student_indexes.js
- */
-
 'use strict';
 
-require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
+/**
+ * Migration 012: Add performance indexes to Student collection
+ *
+ * Ensures { schoolId: 1, class: 1 } and { schoolId: 1, feePaid: 1 } indexes
+ * exist for class-based and payment status queries.
+ */
+
 const mongoose = require('mongoose');
-const config = require('../src/config');
 
-async function migrate() {
-  try {
-    await mongoose.connect(config.MONGO_URI);
-    console.log('Connected to MongoDB');
+const VERSION = '012_add_student_indexes';
 
-    const db = mongoose.connection.db;
-    const collection = db.collection('students');
+async function up() {
+  const db = mongoose.connection.db;
+  const collection = db.collection('students');
 
-    // Check existing indexes
-    const existingIndexes = await collection.indexes();
-    console.log('Existing indexes:', existingIndexes.map(i => i.name));
+  const existingIndexes = await collection.indexes().catch((err) => {
+    if (err.code === 26) return [];
+    throw err;
+  });
 
-    // Add { schoolId: 1, class: 1 } if not present
-    const classIndexExists = existingIndexes.some(
-      i => i.key && i.key.schoolId === 1 && i.key.class === 1
-    );
-    if (!classIndexExists) {
-      await collection.createIndex({ schoolId: 1, class: 1 });
-      console.log('✓ Created index: { schoolId: 1, class: 1 }');
-    } else {
-      console.log('✓ Index { schoolId: 1, class: 1 } already exists');
-    }
+  const classIndexExists = existingIndexes.some(
+    (i) => i.key && i.key.schoolId === 1 && i.key.class === 1
+  );
+  if (!classIndexExists) {
+    await collection.createIndex({ schoolId: 1, class: 1 });
+    console.log('[Migration 012] Created index: { schoolId: 1, class: 1 }');
+  }
 
-    // Add { schoolId: 1, feePaid: 1 } if not present
-    const feePaidIndexExists = existingIndexes.some(
-      i => i.key && i.key.schoolId === 1 && i.key.feePaid === 1
-    );
-    if (!feePaidIndexExists) {
-      await collection.createIndex({ schoolId: 1, feePaid: 1 });
-      console.log('✓ Created index: { schoolId: 1, feePaid: 1 }');
-    } else {
-      console.log('✓ Index { schoolId: 1, feePaid: 1 } already exists');
-    }
-
-    console.log('\nMigration complete');
-    process.exit(0);
-  } catch (err) {
-    console.error('Migration failed:', err);
-    process.exit(1);
+  const feePaidIndexExists = existingIndexes.some(
+    (i) => i.key && i.key.schoolId === 1 && i.key.feePaid === 1
+  );
+  if (!feePaidIndexExists) {
+    await collection.createIndex({ schoolId: 1, feePaid: 1 });
+    console.log('[Migration 012] Created index: { schoolId: 1, feePaid: 1 }');
   }
 }
 
-migrate();
+async function down() {
+  const db = mongoose.connection.db;
+  const collection = db.collection('students');
+
+  for (const key of [{ schoolId: 1, class: 1 }, { schoolId: 1, feePaid: 1 }]) {
+    try {
+      await collection.dropIndex(key);
+      console.log(`[Migration 012] Dropped index: ${JSON.stringify(key)}`);
+    } catch (err) {
+      if (err.code === 27 || err.code === 26) {
+        // Index/collection does not exist — no-op
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+module.exports = { version: VERSION, up, down };

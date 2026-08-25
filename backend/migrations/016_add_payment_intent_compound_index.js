@@ -11,10 +11,12 @@
 
 const mongoose = require('mongoose');
 
+const VERSION = '016_add_payment_intent_compound_index';
+
 async function up() {
   const db = mongoose.connection.db;
   const collection = db.collection('paymentintents');
-  
+
   try {
     await collection.createIndex(
       { studentId: 1, schoolId: 1, expiresAt: 1 },
@@ -53,4 +55,4 @@ async function down() {
   }
 }
 
-module.exports = { up, down };
+module.exports = { version: VERSION, up, down };

@@ -9,6 +9,8 @@
 
 const mongoose = require('mongoose');
 
+const VERSION = '024_add_underpaid_reconciliation_field';
+
 async function up() {
   const db = mongoose.connection.db;
 
@@ -45,4 +47,4 @@ async function down() {
   console.log(`[Migration 024] Removed underpaidReconciliation field from ${result.modifiedCount} payments`);
 }
 
-module.exports = { up, down };
+module.exports = { version: VERSION, up, down };
