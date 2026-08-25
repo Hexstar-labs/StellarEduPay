@@ -293,22 +293,22 @@ const calc = (sid, fid) => {
 ```
 
 ---
-
 ## 🧪 Testing Requirements
 
-### Running Tests
+### Where tests live
 
-#### 1. Install root dependencies (first time only)
+| Location | Purpose |
+|----------|---------|
+| `backend/tests/` | Backend unit / service / controller tests |
+| `tests/` | Root cross-cutting suites only (e2e, integration, helpers) |
+| `frontend/` | Frontend tests (own package scripts) |
+
+**Rule:** never put the same filename under both `tests/` and `backend/tests/`.
+
+### Running tests
 
 ```bash
-# From the project root
-npm install
-```
-
-#### 2. Run the full test suite
-
-```bash
-# From the project root
+# Root suite (tests/ only — not backend/tests)
 npm test
 ```
 
@@ -383,7 +383,8 @@ The backend tests also use mocks; no live MongoDB or Stellar Horizon connection 
 
 ### Writing Tests
 
-We use **Jest** as our testing framework. Tests should:
+# Backend suite only
+npm run test:backend
 
 - Be isolated and not depend on external services
 - Mock Stellar SDK calls to avoid hitting the network

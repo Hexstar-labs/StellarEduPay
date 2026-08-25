@@ -13,7 +13,7 @@ services:
       # MONGO_ROOT_USERNAME and MONGO_ROOT_PASSWORD have no defaults — docker
       # compose up will fail loudly with a clear error if they are not set,
       # rather than silently starting with well-known default credentials.
-      - MONGO_URI=mongodb://${MONGO_ROOT_USERNAME:?MONGO_ROOT_USERNAME must be set}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongo:27017/stellaredupay?authSource=admin
+      - MONGO_URI=mongodb://${MONGO_ROOT_USERNAME:?MONGO_ROOT_USERNAME must be set}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongo:27017/stellaredupay?authSource=admin&replicaSet=rs0
       - STELLAR_NETWORK=${STELLAR_NETWORK}
       - SCHOOL_WALLET_ADDRESS=${SCHOOL_WALLET_ADDRESS}
       - REDIS_HOST=redis
@@ -85,6 +85,31 @@ services:
 
   mongo:
     image: mongo:7
+    # ── Single-node replica set ("rs0") — REQUIRED, not optional ──────────────
+    # Multi-document MongoDB transactions are used by the payment pipeline
+    # (transactionPollingService.processTransaction), fee batch operations
+    # (feeController, feeAdjustmentController) and TransactionManager. A
+    # standalone mongod rejects every startTransaction() with:
+    #   "Transaction numbers are only allowed on a replica set member or mongos"
+    # so a replica set is an infrastructure requirement — see
+    # docs/architecture.md "Replica Set Requirement".
+    #
+    # --keyFile enables both intra-cluster auth and client authentication; the
+    # official entrypoint strips it (and --replSet) during its one-shot init
+    # phase that creates the root user from MONGO_INITDB_* below, then restarts
+    # with the full flags. The keyfile is generated at first boot and is never
+    # committed to the repository.
+    entrypoint:
+      - /bin/bash
+      - -ec
+      - |
+        mkdir -p /etc/mongodb
+        if [ ! -f /etc/mongodb/keyfile ]; then
+          openssl rand -base64 756 > /etc/mongodb/keyfile
+          chmod 400 /etc/mongodb/keyfile
+          chown mongodb:mongodb /etc/mongodb/keyfile
+        fi
+        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /etc/mongodb/keyfile --bind_ip_all
     # MongoDB port is NOT exposed to the host by default. The backend reaches
     # it over the internal backend-db network. To access MongoDB from the host
     # for local debugging only, override this in a docker-compose.override.yml:
@@ -103,12 +128,26 @@ services:
       - backend-db
     mem_limit: ${MONGO_MEM_LIMIT:-1g}
     cpus: ${MONGO_CPUS:-1.0}
+    # Healthy only once rs0 is initiated AND this member is PRIMARY. The first
+    # probe performs rs.initiate(); subsequent probes flip healthy once the
+    # single-node election completes (~seconds). dependents (backend, backup)
+    # wait on service_healthy, so they never start against a non-primary node.
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.runCommand({ ping: 1 })"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      test: |
+        mongosh -u "$$MONGO_INITDB_ROOT_USERNAME" -p "$$MONGO_INITDB_ROOT_PASSWORD" --quiet --eval "
+          var status;
+          try {
+            status = rs.status();
+          } catch (e) {
+            try { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongo:27017' }] }); } catch (e2) {}
+            quit(1);
+          }
+          if (status.ok !== 1 || !db.hello().isWritablePrimary) { quit(1); }
+        "
+      interval: 5s
+      timeout: 10s
+      retries: 24
+      start_period: 20s
     restart: unless-stopped
 
   # Runs scripts/backup.sh every 24 hours and retains RETAIN_DAYS of backups.
@@ -131,7 +170,7 @@ services:
       '
     environment:
       # No defaults — must be explicitly set alongside the mongo service.
-      - MONGO_URI=mongodb://${MONGO_ROOT_USERNAME:?MONGO_ROOT_USERNAME must be set}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongo:27017/stellaredupay?authSource=admin
+      - MONGO_URI=mongodb://${MONGO_ROOT_USERNAME:?MONGO_ROOT_USERNAME must be set}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}@mongo:27017/stellaredupay?authSource=admin&replicaSet=rs0
       - BACKUP_DIR=/backups
       - RETAIN_DAYS=${RETAIN_DAYS:-7}
       - MIN_BACKUP_SIZE=${MIN_BACKUP_SIZE:-1024}

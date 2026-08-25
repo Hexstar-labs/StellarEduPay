@@ -152,7 +152,11 @@ function idempotency(opts = {}) {
             // We own the reservation. Intercept res.json to persist the outcome.
             const originalJson = res.json.bind(res);
             res.json = function (body) {
-              if (res.statusCode < 500) {
+              // Cache 2xx-3xx and 4xx (except 404) responses.
+              // 404 is excluded because it can be transient (e.g., transaction not yet visible on Horizon).
+              // Caching a transient 404 prevents successful retries when the resource becomes available.
+              // 5xx is never cached — release the reservation so the client can retry.
+              if (res.statusCode < 500 && res.statusCode !== 404) {
                 idempotencyStore
                     .complete(canonicalKey, {
                       scope,
@@ -164,7 +168,7 @@ function idempotency(opts = {}) {
                       logger.error('Failed to cache response', { error: err.message });
                     });
               } else {
-                // 5xx is never cached — release the reservation so the client can retry.
+                // 5xx or 404 — release the reservation so the client can retry.
                 idempotencyStore.release(canonicalKey).catch((err) => {
                   logger.debug('[Idempotency] release missed', { error: err.message });
                 });

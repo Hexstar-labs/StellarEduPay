@@ -49,7 +49,7 @@ export function usePaymentEvents({ enabled = true, onEvent } = {}) {
     const schoolId = localStorage.getItem('schoolId');
     if (!schoolId) return;
 
-    const url = `${API_URL}/payments/events`;
+    const url = `${API_URL}/payments/events?schoolId=${encodeURIComponent(schoolId)}`;
     const es = new EventSource(url, { withCredentials: true });
     esRef.current = es;
 

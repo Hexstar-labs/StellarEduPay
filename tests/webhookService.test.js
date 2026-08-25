@@ -29,6 +29,15 @@ jest.mock('../backend/src/utils/logger', () => ({
   child: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }),
 }));
 
+// Mock redisClient so _isReplay uses the Redis path and always allows deliveries
+// through (SET NX EX returns '1' meaning the key was set = not a replay).
+jest.mock('../backend/src/config/redisClient', () => ({
+  isRedisReady: jest.fn().mockReturnValue(true),
+  getRedisClient: jest.fn().mockReturnValue({
+    set: jest.fn().mockResolvedValue('1'),
+  }),
+}));
+
 const WebhookRetry = require('../backend/src/models/webhookRetryModel');
 const {
   fireWebhook,
@@ -59,6 +68,10 @@ beforeEach(() => {
   WebhookRetry.updateOne.mockResolvedValue({});
   // Default: nothing stuck and nothing pending to claim.
   WebhookRetry.findOneAndUpdate.mockResolvedValue(null);
+  // Re-initialise the redisClient mock after clearAllMocks() wipes return values.
+  const redisClient = require('../backend/src/config/redisClient');
+  redisClient.isRedisReady.mockReturnValue(true);
+  redisClient.getRedisClient.mockReturnValue({ set: jest.fn().mockResolvedValue('1') });
 });
 
 // ─── getBackoffDelay ──────────────────────────────────────────────────────────

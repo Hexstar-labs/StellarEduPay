@@ -14,23 +14,13 @@ spec:
       labels:
         app: backend
     spec:
-      # Run as non-root (matches the non-root user in the Dockerfile)
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001
-      # Apply all pending database migrations before the application container
-      # starts. Init containers run to completion first, so no traffic is routed
-      # to this pod (readiness probe on the app container) until migrations have
-      # succeeded. If a migration fails, the init container exits non-zero, the
-      # pod never becomes Ready, and the rollout is blocked — migrations can
-      # never be silently skipped.
-      #
-      # Running from every replica's init container is safe: migrationRunner.js
-      # uses the unique index on Migration.version as a distributed lock, so
-      # only one instance applies each migration and the rest skip it.
       initContainers:
         - name: migrate
-          image: stellaredupay/backend:latest
+          image: stellaredupay/backend:placeholder
+          imagePullPolicy: IfNotPresent
           command: ["npm", "run", "migrate"]
           env:
             - name: MONGO_URI
@@ -47,14 +37,11 @@ spec:
               memory: "256Mi"
       containers:
         - name: backend
-          image: stellaredupay/backend:latest
+          image: stellaredupay/backend:placeholder
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 5000
           env:
-            # Sensitive values are injected from a Kubernetes Secret.
-            # To provision the secret, run scripts/provision-k8s-secrets.sh
-            # (see docs/operator-runbooks.md § Secret Provisioning for the
-            # full checklist, rotation procedure, and audit requirements).
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -65,11 +52,6 @@ spec:
                 secretKeyRef:
                   name: stellaredupay
                   key: MONGO_URI
-            # STELLAR_NETWORK is not set here — it must be provided by the
-            # environment-specific Kustomize overlay (overlays/mainnet or
-            # overlays/testnet). Applying this base manifest directly without
-            # an overlay will intentionally omit the value, preventing
-            # accidental cross-environment deployments.
             - name: REDIS_HOST
               value: "redis"
           readinessProbe:

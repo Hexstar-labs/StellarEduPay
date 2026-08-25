@@ -4,11 +4,17 @@ kind: Kustomization
 # Staging / testnet overlay.
 # Apply with: kubectl apply -k deploy/k8s/overlays/testnet
 #
-# This overlay sets STELLAR_NETWORK=testnet — all transactions are
-# reversible test transactions with no real funds at risk.
+# Image tags are pinned to an immutable commit SHA from CI.
+# Update newTag when promoting a validated build.
 
 resources:
   - ../../
+
+images:
+  - name: stellaredupay/backend
+    newTag: sha-PLACEHOLDER
+  - name: stellaredupay/frontend
+    newTag: sha-PLACEHOLDER
 
 patches:
   - patch: |-

@@ -223,7 +223,9 @@ function requireSchoolAuth(allowedRoles = []) {
 
     if (!isSuperAdmin) {
       // Tenant scope: token schoolId must match the requested school
-      const requestedSchoolId = req.headers['x-school-id'] || req.params?.schoolId;
+      // Accept schoolId from X-School-ID header, URL param, or route param.
+      // URL param support enables EventSource (which cannot send custom headers).
+      const requestedSchoolId = req.headers['x-school-id'] || req.query?.schoolId || req.params?.schoolId;
       if (requestedSchoolId && decoded.schoolId !== requestedSchoolId) {
         return res.status(403).json({
           error: 'Forbidden. Token schoolId does not match the requested school.',

@@ -19,12 +19,11 @@ spec:
         runAsUser: 1001
       containers:
         - name: frontend
-          image: stellaredupay/frontend:latest
+          image: stellaredupay/frontend:placeholder
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
           env:
-            # Next.js server-side proxy target: rewrites /api/* to the backend
-            # pod directly (pod-to-pod, bypasses the Ingress).
             - name: BACKEND_PROXY_TARGET
               valueFrom:
                 configMapKeyRef:
