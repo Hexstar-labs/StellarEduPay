@@ -310,12 +310,226 @@ const calc = (sid, fid) => {
 ```bash
 # Root suite (tests/ only — not backend/tests)
 npm test
+```
+
+All tests mock both the Stellar SDK and MongoDB — **no real network connection or running database is required**.
+
+Expected output:
+
+```
+PASS tests/stellar.test.js
+PASS tests/payment.test.js
+PASS tests/payment-limits.test.js
+...
+
+Test Suites: X passed, X total
+Tests:       X passed, X total
+Time:        ~5s
+```
+
+#### 3. Run a single test file
+
+```bash
+npm test -- tests/stellar.test.js
+npm test -- tests/payment.test.js
+npm test -- tests/payment-limits.test.js
+```
+
+#### 4. Check code coverage
+
+```bash
+# Backend (root Jest config → backend/src)
+npm run coverage
+
+# Frontend (frontend/jest.config.js → frontend/src)
+npm run coverage:frontend
+
+# Equivalent one-off form (works for either package):
+npm test -- --coverage
+```
+
+Jest will print a per-file coverage table (lines, statements, **functions and branches**) and write a full report to:
+
+- `coverage/backend/` — backend source (`backend/src`)
+- `coverage/frontend/` — frontend source (`frontend/src`)
+
+Each directory contains `lcov-report/index.html` (browsable), `lcov.info`, `coverage-summary.json` and `cobertura-coverage.xml`. See [Test Coverage](#-test-coverage) for the measured baseline, thresholds, and the expectation for new code.
+
+#### Test files and what they cover
+
+| File | Coverage |
+|------|----------|
+| [`tests/stellar.test.js`](tests/stellar.test.js) | Stellar service: asset detection, fee validation, amount normalisation, transaction verification, ledger sync |
+| [`tests/payment.test.js`](tests/payment.test.js) | Payment API: full payment flow, all endpoints, edge cases, error handling |
+| [`tests/payment-limits.test.js`](tests/payment-limits.test.js) | Payment limits: validation, boundary cases, error codes |
+
+#### Environment variables for tests
+
+Tests use mocks and do **not** require a real `.env` file. If you want to run the backend's own test suite separately:
+
+```bash
+cd backend
+npm test
+```
+
+The backend tests also use mocks; no live MongoDB or Stellar Horizon connection is needed.
+
+### Test Coverage Requirements
+
+- **New features** must include unit tests
+- **Bug fixes** should include regression tests
+- **API endpoints** require integration tests
+- **Critical services** (Stellar integration, payment processing) require comprehensive test coverage
+
+### Writing Tests
 
 # Backend suite only
 npm run test:backend
 
-# Or from backend folder
-cd backend && npm test
+- Be isolated and not depend on external services
+- Mock Stellar SDK calls to avoid hitting the network
+- Use descriptive test names that explain the scenario
+- Follow the Arrange-Act-Assert pattern
+
+**Example Test:**
+
+```javascript
+describe('Payment Validation', () => {
+  it('should reject payments below minimum amount', async () => {
+    // Arrange
+    const payment = { amount: 0.001, studentId: 'STU001' };
+    
+    // Act
+    const result = await validatePayment(payment);
+    
+    // Assert
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('below minimum');
+  });
+});
+```
+
+---
+
+## 📊 Test Coverage
+
+StellarEduPay measures test coverage on every pull request (see issue #1288). Coverage is collected with Jest's instrumentation for **`backend/src`** (root Jest config) and **`frontend/src`** (frontend Jest config). The CI `coverage` job runs both and uploads the reports as downloadable artefacts on every PR, so reviewers can inspect exactly which code paths a change exercises.
+
+### What is measured
+
+Coverage is reported for **four metrics** — lines, statements, functions, and **branches** — and branch coverage is tracked and reported separately from line coverage. Every defect enumerated in #1288 is an *unexecuted branch* inside a function whose other branches are tested, so branch coverage is the signal that would have surfaced them; line coverage alone would have partially masked them.
+
+### Running it locally
+
+| Command | Scope |
+|---------|-------|
+| `npm run coverage` | backend (`backend/src`) |
+| `npm run coverage:frontend` | frontend (`frontend/src`) |
+| `npm test -- --coverage` | whichever package you run it in |
+
+Reports land in `coverage/backend` and `coverage/frontend` (`lcov-report/index.html`, `lcov.info`, `coverage-summary.json`, `cobertura-coverage.xml`).
+
+### Measured baseline
+
+The baseline below was captured from `main` and is recorded here and in issue #1288. **It is preliminary**: ~64 of 219 suites are currently failing (the blocked prerequisite in #1288), so the numbers understate real coverage. They will be re-measured and the floors raised once the suite is green.
+
+| Area | Lines | Branches | Functions | Statements |
+|------|-------|----------|-----------|------------|
+| `backend/src` | 49.45% | 43.12% | 44.34% | 48.77% |
+| `frontend/src` | 39.37% | 47.27% | 23% | 38.2% |
+
+The no-regression floors configured in the Jest configs (set at the measured baseline, with a small margin for run-to-run variance) are:
+
+| Scope | Lines | Branches | Functions | Statements |
+|-------|-------|----------|-----------|------------|
+| global — all of `backend/src` **except** `services/`, `middleware/`, `controllers/` | 51% | 46% | 37% | 51% |
+| `backend/src/services/` | 53% | 45% | 51% | 52% |
+| `backend/src/middleware/` | 52% | 45% | 42% | 50% |
+| `backend/src/controllers/` | 37% | 32% | 32% | 36% |
+| `frontend/src` (global) | 39% | 47% | 22% | 38% |
+
+### Thresholds (no-regression floor)
+
+A `coverageThreshold` is set in each Jest config at (or slightly below) the measured baseline, so coverage **cannot regress** from the numbers above:
+
+- **Global floor** — applies repo-wide. A PR that drops overall coverage below the baseline fails the coverage check.
+- **Per-directory floors** for `backend/src/services/`, `backend/src/middleware/` and `backend/src/controllers/` — the money, auth and tenant-isolation code. These carry the same starting floor today, but are the areas intended to be held to a *much higher* bar (target ≥ 70%) once the suite is green, because error-handling and failover paths there are exactly what a payments platform depends on.
+
+> The CI `coverage` job is intentionally **non-gating** for now: with the suite red, a low baseline must not block merges. The thresholds still enforce "no further regression." When the suite is green, promote the job to a required check and raise the per-directory floors.
+
+### Expectation for new code
+
+- New features and bug fixes **must** ship with tests (regression tests for fixes).
+- Cover the **error-handling and failover branches**, not just the happy path — that is where the highest-risk, least-tested code lives.
+- A PR should not reduce coverage below the global floor, and should aim to meet or exceed the threshold for the directory it touches.
+- Coverage on changed lines is the primary review signal; treat a drop there as a request to add tests.
+
+### Follow-up backlog
+
+The ten lowest-covered modules under `backend/src/services/` are tracked in follow-up issue **#1303** — the concrete backlog this measurement produces.
+
+---
+
+## 🔄 Pull Request Process
+
+### Before Submitting
+
+1. **Sync with main branch**
+   ```bash
+   git checkout main
+   git pull origin main
+   git checkout your-branch
+   git rebase main
+   ```
+
+2. **Run all checks locally**
+   ```bash
+   # Run tests (from project root)
+   npm test
+   
+   # Check backend syntax
+   node -c backend/src/app.js
+   ```
+
+3. **Update documentation**
+   - Update `docs/api-spec.md` if you changed API endpoints
+   - Update `README.md` if you added new features or changed setup
+   - Add inline code comments for complex logic
+
+### Submitting Your PR
+
+1. **Push your branch**
+   ```bash
+   git push origin your-branch-name
+   ```
+
+2. **Create Pull Request on GitHub**
+   - Use a clear, descriptive title
+   - Reference the issue: "Closes #123" or "Fixes #456"
+   - Describe what changed and why
+   - Include screenshots for UI changes
+   - List any breaking changes
+
+3. **PR Template**
+   ```markdown
+   ## Description
+   Brief description of changes
+   
+   ## Related Issue
+   Closes #123
+   
+   ## Changes Made
+   - Added payment reminder scheduler
+   - Updated email notification service
+   - Added tests for reminder logic
+   
+   ## Testing
+   - [ ] Unit tests added/updated
+   - [ ] Manual testing completed
+   - [ ] No console errors
+   
+   ## Screenshots (if applicable)
+   [Add screenshots for UI changes]
    ```
 
 ### PR Review Requirements

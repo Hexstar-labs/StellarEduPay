@@ -3,8 +3,9 @@
   "version": "1.0.0",
   "scripts": {
     "check:syntax": "node ./scripts/check-syntax.js",
-    "test": "jest --testPathPattern=^tests/ --forceExit --testPathIgnorePatterns=/node_modules/|/backend/",
-    "test:backend": "npm --prefix backend test",
+    "test": "jest --testPathPattern=tests/ --forceExit",
+    "coverage": "jest --testPathPattern=tests/ --forceExit --coverage",
+    "coverage:frontend": "cd frontend && npm run coverage",
     "test:e2e": "jest tests/e2e/ --forceExit --runInBand --testPathIgnorePatterns=/node_modules/",
     "test:integration": "cross-env RUN_INTEGRATION_TESTS=true jest tests/stellar.integration.test.js --forceExit",
     "test:docker-healthcheck": "cross-env RUN_DOCKER_COMPOSE_HEALTHCHECK_TESTS=true jest tests/dockerComposeHealthCheck.test.js --forceExit",
@@ -62,7 +63,47 @@
       "tests/stellar\\.integration\\.test\\.js",
       "tests/integration/",
       "tests/e2e/"
-    ]
+    ],
+    "collectCoverageFrom": [
+      "backend/src/**/*.js",
+      "!backend/src/**/*.test.js",
+      "!backend/src/**/__tests__/**"
+    ],
+    "coverageReporters": [
+      "text",
+      "text-summary",
+      "lcov",
+      "json-summary",
+      "html",
+      "cobertura"
+    ],
+    "coverageDirectory": "coverage/backend",
+    "coverageThreshold": {
+      "global": {
+        "branches": 46,
+        "functions": 37,
+        "lines": 51,
+        "statements": 51
+      },
+      "./backend/src/services/": {
+        "branches": 45,
+        "functions": 51,
+        "lines": 53,
+        "statements": 52
+      },
+      "./backend/src/middleware/": {
+        "branches": 45,
+        "functions": 42,
+        "lines": 52,
+        "statements": 50
+      },
+      "./backend/src/controllers/": {
+        "branches": 32,
+        "functions": 32,
+        "lines": 37,
+        "statements": 36
+      }
+    }
   },
   "dependencies": {
     "bullmq": "^5.71.1",

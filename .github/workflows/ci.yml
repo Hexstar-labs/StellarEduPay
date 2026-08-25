@@ -178,6 +178,77 @@ jobs:
         run: npm run migrate
       - run: npm test
 
+  # ── #1288: Test coverage measurement ───────────────────────────────────────
+  # Collects backend (root jest config) and frontend coverage and uploads the
+  # reports as downloadable artefacts on every PR, so reviewers can inspect
+  # exactly which code paths a change exercises. This job is intentionally
+  # NON-GATING for now: the suite is currently red (see issue #1288's blocked
+  # prerequisite), so a low/zero baseline must not block merges yet. Once the
+  # suite is green the per-directory thresholds in the jest configs and this
+  # job can be promoted to a required check.
+  coverage:
+    name: Test coverage report
+    runs-on: ubuntu-latest
+    env:
+      STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
+      MONGO_URI: mongodb://localhost:27017/stellaredupay_test
+      JWT_SECRET: ci-test-jwt-secret-not-used-in-production
+      SCHOOL_WALLET_ADDRESS: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            backend/node_modules
+            frontend/node_modules
+            node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - run: npm ci
+      - run: cd backend && npm ci && cd ..
+      - run: cd frontend && npm ci && cd ..
+
+      - name: Backend coverage
+        continue-on-error: true
+        run: npm run coverage
+
+      - name: Frontend coverage
+        continue-on-error: true
+        run: npm run coverage:frontend
+
+      - name: Upload backend coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-backend
+          path: coverage/backend
+          retention-days: 14
+
+      - name: Upload frontend coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-frontend
+          path: coverage/frontend
+          retention-days: 14
+
   docker-build:
     name: Docker image build & smoke test
     runs-on: ubuntu-latest
