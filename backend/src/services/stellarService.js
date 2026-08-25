@@ -119,6 +119,7 @@ async function extractValidPayment(tx, walletAddress) {
 
   const ops = await withStellarRetry(() => innerTx.operations(), {
     label: "extractValidPayment.operations",
+    context: `Transaction ${tx.hash} operations`,
   });
   // #840 — only a successful `payment` operation landing on the school wallet
   // is creditable. detectAsset then enforces the asset/issuer (#841): a
@@ -447,7 +448,7 @@ async function detectAbnormalPatterns(
 async function verifyTransaction(txHash, walletAddress, schoolId = null) {
   const tx = await withStellarRetry(
     () => server.transactions().transaction(txHash).call(),
-    { label: "verifyTransaction" },
+    { label: "verifyTransaction", context: `Transaction ${txHash}` },
   );
 
   // 1. Validate transaction success
@@ -465,6 +466,7 @@ async function verifyTransaction(txHash, walletAddress, schoolId = null) {
   // 2. Find matching payment operation first (destination + asset checks before memo)
   const ops = await withStellarRetry(() => innerTx.operations(), {
     label: "verifyTransaction.operations",
+    context: `Transaction ${txHash} operations`,
   });
   const payOp = ops.records.find(
     (op) => op.type === "payment" && op.to === walletAddress,
@@ -612,7 +614,7 @@ async function syncPaymentsForSchool(school) {
         .order("desc")
         .limit(200)
         .call(),
-    { label: `syncPaymentsForSchool(${schoolId})` },
+    { label: `syncPaymentsForSchool(${schoolId})`, context: `Account ${stellarAddress} transactions` },
   );
 
   let done = false;
@@ -1031,26 +1033,20 @@ async function finalizeConfirmedPayments(schoolId) {
  * If walletAddress is provided, only payments to that wallet are included.
  */
 async function parseIncomingTransaction(txHash, walletAddress = null) {
-  let tx;
-  try {
-    tx = await withStellarRetry(
-      () => server.transactions().transaction(txHash).call(),
-      { label: "parseIncomingTransaction" },
-    );
-  } catch (err) {
-    throw classifyHorizonError(err, `Transaction ${txHash}`);
-  }
+  // withStellarRetry classifies any failure (404/429/5xx/network) into a
+  // structured error before it reaches here — see the design decision
+  // documented in withStellarRetry.js. No local try/catch needed.
+  const tx = await withStellarRetry(
+    () => server.transactions().transaction(txHash).call(),
+    { label: "parseIncomingTransaction", context: `Transaction ${txHash}` },
+  );
 
   const memo = tx.memo ? tx.memo.trim() : null;
 
-  let ops;
-  try {
-    ops = await withStellarRetry(() => tx.operations(), {
-      label: "parseIncomingTransaction.operations",
-    });
-  } catch (err) {
-    throw classifyHorizonError(err, "Transaction operations");
-  }
+  const ops = await withStellarRetry(() => tx.operations(), {
+    label: "parseIncomingTransaction.operations",
+    context: "Transaction operations",
+  });
   const payments = ops.records
     .filter(
       (op) =>

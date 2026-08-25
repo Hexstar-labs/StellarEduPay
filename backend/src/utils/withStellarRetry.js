@@ -19,23 +19,43 @@ function isTransient(err) {
 
 function classifyHorizonError(err, context = '') {
   const s = getStatus(err);
-  if (s === 404) return Object.assign(new Error(`${context || 'Transaction'} not found on the Stellar network`), { code: 'NOT_FOUND', status: 404 });
+  // originalError is attached to every classified error (mirroring the
+  // StellarAPIError convention in stellarRateLimitedClient.js) so the raw
+  // Horizon/axios failure — status, message, Horizon `extras`/result_codes —
+  // is never fully discarded, even though the classified .status/.code/.message
+  // are deliberately normalized for callers that branch on error type.
+  if (s === 404) return Object.assign(new Error(`${context || 'Transaction'} not found on the Stellar network`), { code: 'NOT_FOUND', status: 404, originalError: err });
   if (s === 429 || (s >= 500 && s < 600) || NETWORK_CODES.has(err.code) || /timeout|network|socket hang up/i.test(err.message || ''))
-    return Object.assign(new Error('Stellar Horizon is temporarily unavailable. Please retry shortly.'), { code: 'HORIZON_UNAVAILABLE', status: 503 });
+    return Object.assign(new Error('Stellar Horizon is temporarily unavailable. Please retry shortly.'), { code: 'HORIZON_UNAVAILABLE', status: 503, originalError: err });
   if (err.code && err.status) return err;
-  return Object.assign(new Error(err.message || 'Unexpected Stellar network error'), { code: 'STELLAR_NETWORK_ERROR', status: 502 });
+  return Object.assign(new Error(err.message || 'Unexpected Stellar network error'), { code: 'STELLAR_NETWORK_ERROR', status: 502, originalError: err });
 }
 
+// Design decision: classifyHorizonError is applied HERE, inside
+// withStellarRetry, for every caller — not left to each call site to
+// remember. This was chosen after finding call sites had already drifted:
+// some wrapped the result in classifyHorizonError themselves (stellarService's
+// parseIncomingTransaction — and did so with a stale, unimported reference to
+// classifyHorizonError, throwing a raw ReferenceError instead), while others
+// (stellarService's verifyTransaction) documented classified error codes
+// (NOT_FOUND, HORIZON_UNAVAILABLE) in their JSDoc but never actually produced
+// them. Centralizing the classification here makes it structurally
+// impossible for a call site to forget it, and every withStellarRetry call
+// site in stellarService.js now relies on this rather than classifying
+// itself. classifyHorizonError() is idempotent on an already-classified error
+// (see its `err.code && err.status` passthrough), so this is safe even if a
+// caller further up the stack also classifies defensively.
 async function withStellarRetry(fn, opts = {}) {
   const maxAttempts = opts.maxAttempts || MAX_ATTEMPTS;
   const baseDelay   = opts.baseDelay   || BASE_DELAY;
   const label       = opts.label       || 'StellarCall';
+  const context     = opts.context     || label;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await fn();
     } catch (err) {
-      if (!isTransient(err) || attempt === maxAttempts) throw err;
+      if (!isTransient(err) || attempt === maxAttempts) throw classifyHorizonError(err, context);
       const delay = Math.min(baseDelay * 2 ** (attempt - 1), MAX_DELAY);
       const wait  = delay + Math.floor(Math.random() * delay * 0.3);
       logger.warn(`${label} attempt ${attempt}/${maxAttempts} failed — retrying in ${wait}ms`, { error: err.message });
