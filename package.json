@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "scripts": {
     "check:syntax": "node ./scripts/check-syntax.js",
-    "test": "jest --testPathPattern=tests/ --forceExit",
+    "test": "jest --testPathPattern=^tests/ --forceExit --testPathIgnorePatterns=/node_modules/|/backend/",
+    "test:backend": "npm --prefix backend test",
     "test:e2e": "jest tests/e2e/ --forceExit --runInBand --testPathIgnorePatterns=/node_modules/",
     "test:integration": "cross-env RUN_INTEGRATION_TESTS=true jest tests/stellar.integration.test.js --forceExit",
     "test:docker-healthcheck": "cross-env RUN_DOCKER_COMPOSE_HEALTHCHECK_TESTS=true jest tests/dockerComposeHealthCheck.test.js --forceExit",
@@ -57,6 +58,7 @@
     ],
     "testPathIgnorePatterns": [
       "/node_modules/",
+      "/backend/",
       "tests/stellar\\.integration\\.test\\.js",
       "tests/integration/",
       "tests/e2e/"

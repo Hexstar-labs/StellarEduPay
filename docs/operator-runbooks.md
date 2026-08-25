@@ -54,113 +54,87 @@ is idempotent, and emits an audit trail for your change-management log.
    JWT_SECRET=<value> MONGO_URI=<value> SIGNER_MASTER_KEY=<value> \
      NAMESPACE=<namespace> \
      ./scripts/provision-k8s-secrets.sh
-   ```
-4. Record the script's audit output (context, operator, timestamp) in your
-   incident or change-management log.
-5. Deploy via the environment overlay — not the base manifest directly:
-   ```sh
-   kubectl apply -k deploy/k8s/overlays/mainnet   # production
-   kubectl apply -k deploy/k8s/overlays/testnet   # staging
-   ```
-6. Verify the backend pods reach `Running` state and the `/health` endpoint
-   returns `{"status":"healthy"}`.
-
-The script (`scripts/provision-k8s-secrets.sh`) uses `--dry-run=client | apply`
+Record the script's audit output (context, operator, timestamp) in your
+incident or change-management log.
+Deploy via the environment overlay — not the base manifest directly:
+kubectl apply -k deploy/k8s/overlays/mainnet   # production
+kubectl apply -k deploy/k8s/overlays/testnet   # staging
+Verify the backend pods reach Running state and the /health endpoint
+returns {"status":"healthy"}.
+The script (scripts/provision-k8s-secrets.sh) uses --dry-run=client | apply
 so it is safe to re-run; it patches an existing secret without error.
-
-## Key Rotation
-
+Key Rotation
 Rotate JWT secrets, webhook secrets, database credentials, queue credentials, deployment tokens, and Stellar signing credentials when compromise is suspected, operator membership changes, or the scheduled interval expires.
-
 General rotation order (used for any credential not covered by a script below): create replacement secret, deploy dual-read support if required, rotate provider-side secret, redeploy API and workers, revoke old secret, verify operations, and record rotation time and operator.
-
-### JWT secret — `node scripts/rotate-jwt-secret.js --confirm`
-
-Generates a new secret, patches the `stellaredupay` Kubernetes Secret's `JWT_SECRET`, and rolls `deployment/backend` — the create/rotate/redeploy/revoke sequence above run as one script instead of hand-typed `kubectl` commands, removing the risk of doing those steps out of order.
-
-This is a hard cutover (JWT_SECRET has no dual-secret verification support): every live session is invalidated immediately, and stored MFA secrets — encrypted with a key derived from JWT_SECRET — become undecryptable, so enrolled users must re-enroll MFA. `--confirm` is required and is the human review/approval gate: read the script's header comment for the full list of side effects before running it. Pass `--secret-name`, `--deployment`, or `--namespace` to target a non-default Secret/Deployment/namespace (e.g. to rehearse against a staging cluster first).
-
-### Stellar signing credential — `node scripts/rotate-signer-master-key.js [--apply]`
-
-Rotates `SIGNER_MASTER_KEY`, the key that encrypts Stellar signing secret keys at rest (`backend/src/utils/signerKeyManager.js`). Set `SIGNER_MASTER_KEY_OLD` to the key currently protecting stored records and `SIGNER_MASTER_KEY` to the replacement, then run the script: it re-encrypts every school's stored signing key under the new key and reports per-record success/failure. Defaults to a dry run (decrypts and re-encrypts in memory without writing) so a bad key pair is caught before any record is touched; pass `--apply` to persist. After a successful `--apply` run, update the deployment's `SIGNER_MASTER_KEY` secret (dropping `SIGNER_MASTER_KEY_OLD`), redeploy, verify a test decrypt/sign, and record the rotation time and operator.
-
-### Other credentials
-
+JWT secret — node scripts/rotate-jwt-secret.js --confirm
+Generates a new secret, patches the stellaredupay Kubernetes Secret's JWT_SECRET, and rolls deployment/backend — the create/rotate/redeploy/revoke sequence above run as one script instead of hand-typed kubectl commands, removing the risk of doing those steps out of order.
+This is a hard cutover (JWT_SECRET has no dual-secret verification support): every live session is invalidated immediately, and stored MFA secrets — encrypted with a key derived from JWT_SECRET — become undecryptable, so enrolled users must re-enroll MFA. --confirm is required and is the human review/approval gate: read the script's header comment for the full list of side effects before running it. Pass --secret-name, --deployment, or --namespace to target a non-default Secret/Deployment/namespace (e.g. to rehearse against a staging cluster first).
+Stellar signing credential — node scripts/rotate-signer-master-key.js [--apply]
+Rotates SIGNER_MASTER_KEY, the key that encrypts Stellar signing secret keys at rest (backend/src/utils/signerKeyManager.js). Set SIGNER_MASTER_KEY_OLD to the key currently protecting stored records and SIGNER_MASTER_KEY to the replacement, then run the script: it re-encrypts every school's stored signing key under the new key and reports per-record success/failure. Defaults to a dry run (decrypts and re-encrypts in memory without writing) so a bad key pair is caught before any record is touched; pass --apply to persist. After a successful --apply run, update the deployment's SIGNER_MASTER_KEY secret (dropping SIGNER_MASTER_KEY_OLD), redeploy, verify a test decrypt/sign, and record the rotation time and operator.
+Other credentials
 Webhook secrets, database credentials, queue credentials, and deployment tokens do not yet have scripted rotation — follow the general rotation order above and record the rotation in the incident log.
-
-## Restore Procedure
-
-1. Stop API writes and workers.
-2. Create a forensic snapshot of the current database.
-3. Restore the latest known-good backup into staging.
-4. Run migrations and integrity checks against staging.
-5. Compare restored payments with on-chain transaction state.
-6. Decide whether to promote the backup or repair selected records.
-7. Communicate RPO impact before production promotion.
-8. Resume workers only after database and queue state are consistent.
-
-### Running the Restore Script
-
-The restore script (`scripts/restore.sh`) uses **safe defaults** — it will not drop
+Restore Procedure
+Stop API writes and workers.
+Create a forensic snapshot of the current database.
+Restore the latest known-good backup into staging.
+Run migrations and integrity checks against staging.
+Compare restored payments with on-chain transaction state.
+Decide whether to promote the backup or repair selected records.
+Communicate RPO impact before production promotion.
+Resume workers only after database and queue state are consistent.
+Running the Restore Script
+The restore script (scripts/restore.sh) uses safe defaults — it will not drop
 existing collections unless you explicitly request it.
-
-#### Safe defaults (no data loss risk)
-
-```sh
+Safe defaults (no data loss risk)
 MONGO_URI=mongodb://localhost:27017/stellaredupay \
 BACKUP_FILE=./backups/20260324T120000Z.gz \
   ./scripts/restore.sh
-```
-
 This merges the backup into the existing database. Records already in the database
 are preserved; the backup fills in anything that is missing.
-
-#### Dry-run mode — preview without mutation
-
-Use `--dry-run` (or `DRY_RUN=true`) to print the target URI and the exact
-`mongorestore` command that *would* be executed, without touching the database:
-
-```sh
+Dry-run mode — preview without mutation
+Use --dry-run (or DRY_RUN=true) to print the target URI and the exact
+mongorestore command that would be executed, without touching the database:
 MONGO_URI=mongodb://localhost:27017/stellaredupay \
 BACKUP_FILE=./backups/20260324T120000Z.gz \
   ./scripts/restore.sh --dry-run
-```
-
 Always run dry-run first in production to confirm the correct archive and URI
 before committing to the restore.
-
-#### Drop-and-replace restore (destructive — requires confirmation)
-
-Set `DROP=true` (or pass `--drop`) to drop existing collections before restoring.
+Drop-and-replace restore (destructive — requires confirmation)
+Set DROP=true (or pass --drop) to drop existing collections before restoring.
 The script will prompt for confirmation before proceeding:
-
-```sh
 MONGO_URI=mongodb://localhost:27017/stellaredupay \
 BACKUP_FILE=./backups/20260324T120000Z.gz \
 DROP=true \
   ./scripts/restore.sh
-```
-
-```
 WARNING: You are about to DROP existing collections on mongodb://localhost:27017/stellaredupay.
          This will permanently delete all data in those collections before
          restoring from: ./backups/20260324T120000Z.gz
 
 Are you sure? [y/N]
-```
-
-You must type `y` or `Y` to proceed; any other input aborts the restore.
-
-#### Bypassing the interactive prompt (scripted pipelines)
-
-Pass `--yes` or `-y` to skip the interactive confirmation. Only use this in
+You must type y or Y to proceed; any other input aborts the restore.
+Bypassing the interactive prompt (scripted pipelines)
+Pass --yes or -y to skip the interactive confirmation. Only use this in
 automated pipelines where the intent to drop has already been reviewed:
-
-```sh
 MONGO_URI=mongodb://localhost:27017/stellaredupay \
 BACKUP_FILE=./backups/20260324T120000Z.gz \
 DROP=true \
   ./scripts/restore.sh --yes
-```
-
-**Never combine `--yes` with an unreviewed `MONGO_URI` in production scripts.**
+Never combine --yes with an unreviewed MONGO_URI in production scripts.
+Image tags and rollbacks
+First-party images are pinned by commit SHA in each Kustomize overlay:
+images:
+  - name: stellaredupay/backend
+    newTag: sha-abc1234
+  - name: stellaredupay/frontend
+    newTag: sha-abc1234
+Promote testnet → mainnet
+Validate the build on testnet (kubectl apply -k deploy/k8s/overlays/testnet).
+Copy the same newTag into overlays/mainnet/kustomization.yaml.
+Open a PR — the diff is a one-line tag change.
+After merge: kubectl apply -k deploy/k8s/overlays/mainnet.
+Rollback
+kubectl rollout undo deployment/backend
+kubectl rollout undo deployment/frontend
+Because the previous ReplicaSet still references the old immutable tag, undo restores that exact image (not whatever :latest points at).
+MongoDB
+deploy/k8s/mongodb-statefulset.yaml runs a single replica (replicas: 1) with no --replSet. This is intentional for the in-cluster baseline; multi-document transactions require a replica set or an external managed MongoDB (e.g. Atlas).
