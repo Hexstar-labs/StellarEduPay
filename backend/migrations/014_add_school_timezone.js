@@ -8,6 +8,8 @@
 
 const mongoose = require('mongoose');
 
+const VERSION = '014_add_school_timezone';
+
 async function up() {
   const db = mongoose.connection.db;
   const result = await db.collection('schools').updateMany(
@@ -26,4 +28,4 @@ async function down() {
   console.log(`[Migration 013] Removed timezone field from ${result.modifiedCount} schools`);
 }
 
-module.exports = { up, down };
+module.exports = { version: VERSION, up, down };

@@ -9,6 +9,8 @@
 
 const mongoose = require('mongoose');
 
+const VERSION = '019_add_reminder_time_window';
+
 async function up() {
   const db = mongoose.connection.db;
   const result = await db.collection('schools').updateMany(
@@ -27,4 +29,4 @@ async function down() {
   console.log(`[Migration 017] Removed reminderTimeWindow from ${result.modifiedCount} schools`);
 }
 
-module.exports = { up, down };
+module.exports = { version: VERSION, up, down };

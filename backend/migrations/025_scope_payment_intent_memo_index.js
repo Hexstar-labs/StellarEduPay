@@ -17,7 +17,12 @@ const VERSION = '025_scope_payment_intent_memo_index';
 async function up() {
   const collection = mongoose.connection.collection('paymentintents');
 
-  const indexes = await collection.indexes();
+  // indexes() throws NamespaceNotFound (code 26) on a collection that has
+  // never been created — there is simply no existing index to migrate.
+  const indexes = await collection.indexes().catch((err) => {
+    if (err.code === 26) return [];
+    throw err;
+  });
   const globalMemoIndex = indexes.find(
     (idx) => idx.unique && idx.key && Object.keys(idx.key).length === 1 && idx.key.memo !== undefined
   );
@@ -36,7 +41,10 @@ async function up() {
 async function down() {
   const collection = mongoose.connection.collection('paymentintents');
 
-  const indexes = await collection.indexes();
+  const indexes = await collection.indexes().catch((err) => {
+    if (err.code === 26) return [];
+    throw err;
+  });
   const compoundIndex = indexes.find((idx) => idx.name === 'schoolId_1_memo_1_unique');
   if (compoundIndex) {
     await collection.dropIndex(compoundIndex.name);

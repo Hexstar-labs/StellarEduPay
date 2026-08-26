@@ -28,7 +28,7 @@ const MIGRATIONS_DIR = path.join(__dirname, '../../migrations');
  * @param {Function} [_require] - injectable require for testing
  * @param {object} [_db] - injectable database handle for testing
  */
-async function runMigrations(_require = require) {
+async function runMigrations(_require = require, _db = null) {
   // Fail loudly rather than silently no-op. The migrations directory is a
   // required part of every deployment (it is copied into the production image
   // by backend/Dockerfile). If it is missing here we are almost certainly in a

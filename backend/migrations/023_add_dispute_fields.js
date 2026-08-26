@@ -17,6 +17,7 @@
 
 const mongoose = require('mongoose');
 
+const VERSION = '023_add_dispute_fields';
 const DISPUTE_SLA_HOURS = parseInt(process.env.DISPUTE_SLA_HOURS, 10) || 72;
 
 async function up() {
@@ -116,4 +117,4 @@ async function down() {
   console.log('[Migration 019] Removed SLA and evidence fields from disputes');
 }
 
-module.exports = { up, down };
+module.exports = { version: VERSION, up, down };

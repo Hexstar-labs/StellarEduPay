@@ -40,6 +40,14 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error('[migrate] Migration run failed:', err);
+  if (err instanceof ReferenceError) {
+    console.error(
+      '[migrate] Migration runner crashed with a ReferenceError — this is a ' +
+      'code defect in migrationRunner.js, not an operational migration ' +
+      'failure against the database:', err,
+    );
+  } else {
+    console.error('[migrate] Migration run failed:', err);
+  }
   process.exit(1);
 });

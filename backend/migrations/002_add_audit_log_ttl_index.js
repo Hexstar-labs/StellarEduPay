@@ -10,6 +10,8 @@
 
 const mongoose = require('mongoose');
 
+const VERSION = '002_add_audit_log_ttl_index';
+
 async function up() {
   const ttlDays = parseInt(process.env.AUDIT_LOG_TTL_DAYS || '730', 10);
   const ttlSeconds = ttlDays * 24 * 60 * 60;
@@ -18,8 +20,16 @@ async function up() {
   const collection = db.collection('auditlogs');
 
   try {
-    // Drop existing TTL index if it exists
-    const indexes = await collection.getIndexes();
+    // Drop existing TTL index if it exists. getIndexes() throws
+    // NamespaceNotFound (code 26) when the collection has never been
+    // created (e.g. a fresh database) — that just means there is nothing to
+    // drop yet, not a failure.
+    let indexes = {};
+    try {
+      indexes = await collection.getIndexes();
+    } catch (error) {
+      if (error.code !== 26) throw error;
+    }
     for (const [indexName, indexSpec] of Object.entries(indexes)) {
       if (indexSpec.expireAfterSeconds !== undefined) {
         await collection.dropIndex(indexName);
@@ -44,7 +54,12 @@ async function down() {
   const collection = db.collection('auditlogs');
 
   try {
-    const indexes = await collection.getIndexes();
+    let indexes = {};
+    try {
+      indexes = await collection.getIndexes();
+    } catch (error) {
+      if (error.code !== 26) throw error;
+    }
     for (const [indexName, indexSpec] of Object.entries(indexes)) {
       if (indexSpec.expireAfterSeconds !== undefined) {
         await collection.dropIndex(indexName);
@@ -57,4 +72,4 @@ async function down() {
   }
 }
 
-module.exports = { up, down };
+module.exports = { version: VERSION, up, down };

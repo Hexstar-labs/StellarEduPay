@@ -16,8 +16,13 @@ const VERSION = '008_add_school_slug_unique_index';
 async function up() {
   const collection = mongoose.connection.collection('schools');
 
-  // Drop any existing non-unique index on slug before creating the unique one
-  const indexes = await collection.indexes();
+  // Drop any existing non-unique index on slug before creating the unique
+  // one. indexes() throws NamespaceNotFound (code 26) on a collection that
+  // has never been created — nothing to drop.
+  const indexes = await collection.indexes().catch((err) => {
+    if (err.code === 26) return [];
+    throw err;
+  });
   for (const idx of indexes) {
     if (idx.key && idx.key.slug !== undefined && !idx.unique) {
       await collection.dropIndex(idx.name);
@@ -31,7 +36,10 @@ async function up() {
 
 async function down() {
   const collection = mongoose.connection.collection('schools');
-  const indexes = await collection.indexes();
+  const indexes = await collection.indexes().catch((err) => {
+    if (err.code === 26) return [];
+    throw err;
+  });
   for (const idx of indexes) {
     if (idx.key && idx.key.slug !== undefined && idx.unique) {
       await collection.dropIndex(idx.name);
