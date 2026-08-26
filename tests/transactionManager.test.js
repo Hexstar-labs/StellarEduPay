@@ -101,19 +101,21 @@ jest.mock('../backend/src/config/database', () => ({
   },
 }));
 
-// VersionCounter uses mongoose.model() — stub the whole module so it never
-// touches a real DB. TransactionManager doesn't call VersionCounter from
-// withTransaction/commitTransaction/abortTransaction paths, but it's imported
-// at module load time.
-// { virtual: true } is required because mongoose is not installed at the root
-// (it lives in backend/node_modules which is also absent in the CI environment).
+const mockVersionCounter = {
+  findOne: jest.fn(),
+  findOneAndUpdate: jest.fn(),
+  updateMany: jest.fn(),
+};
+
 jest.mock('mongoose', () => ({
   Schema: class {
     constructor() {}
     index() { return this; }
   },
-  model:  (name, schema) => ({ findOneAndUpdate: jest.fn(), updateMany: jest.fn(), findOne: jest.fn() }),
-  models: {},
+  model:  () => mockVersionCounter,
+  models: {
+    VersionCounter: mockVersionCounter,
+  },
 }), { virtual: true });
 
 // Also intercept backend's private require path for the same module.
@@ -122,6 +124,8 @@ jest.mock('../backend/node_modules/mongoose', () => jest.requireMock('mongoose')
 // ─── Subject ──────────────────────────────────────────────────────────────────
 const {
   TransactionManager,
+  OptimisticLockError,
+  TRANSACTION_ERRORS,
 } = require('../backend/src/services/transactionManager');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -468,5 +472,133 @@ describe('withTransaction()', () => {
     // 2 sessions × up to 2 driver-internal attempts each
     expect(calls).toBe(4);
     expect(mockConnection.startSession).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('withOptimisticLock() (#1277)', () => {
+  beforeEach(() => {
+    mockVersionCounter.findOne.mockReset();
+    mockVersionCounter.findOneAndUpdate.mockReset();
+  });
+
+  test('executes operation and updates VersionCounter when CAS succeeds', async () => {
+    const tm = makeTM();
+    mockVersionCounter.findOne.mockResolvedValue({ version: 5 });
+    mockVersionCounter.findOneAndUpdate.mockResolvedValue({ entityType: 'school', entityId: 'SCH-1', version: 6 });
+
+    let receivedVersion;
+    const result = await tm.withOptimisticLock(async (ver) => {
+      receivedVersion = ver;
+      return 'op_result';
+    }, { entityType: 'school', entityId: 'SCH-1' });
+
+    expect(receivedVersion).toBe(5);
+    expect(result).toBe('op_result');
+    expect(mockVersionCounter.findOneAndUpdate).toHaveBeenCalledWith(
+      { entityType: 'school', entityId: 'SCH-1', version: 5 },
+      expect.objectContaining({ $inc: { version: 1 } }),
+      expect.objectContaining({ new: true })
+    );
+  });
+
+  test('throws OptimisticLockError when CAS update returns null (version mismatch)', async () => {
+    const tm = makeTM();
+    mockVersionCounter.findOne.mockResolvedValue({ version: 5 });
+    // CAS filter fails because concurrent writer bumped version to 6
+    mockVersionCounter.findOneAndUpdate.mockResolvedValue(null);
+
+    await expect(
+      tm.withOptimisticLock(async () => 'result', { entityType: 'school', entityId: 'SCH-1' })
+    ).rejects.toThrow(OptimisticLockError);
+
+    try {
+      await tm.withOptimisticLock(async () => 'result', { entityType: 'school', entityId: 'SCH-1' });
+    } catch (err) {
+      expect(err.code).toBe(TRANSACTION_ERRORS.VERSION_MISMATCH);
+      expect(err.details.currentVersion).toBe(5);
+      expect(err.details.attemptedVersion).toBe(6);
+    }
+  });
+
+  test('handles concurrent race where exactly one CAS succeeds and the other raises version conflict', async () => {
+    const tm = makeTM();
+    mockVersionCounter.findOne.mockResolvedValue({ version: 2 });
+
+    // Operation A's CAS succeeds, Operation B's CAS fails
+    mockVersionCounter.findOneAndUpdate
+      .mockResolvedValueOnce({ entityType: 'school', entityId: 'SCH-1', version: 3 })
+      .mockResolvedValueOnce(null);
+
+    const opA = tm.withOptimisticLock(async () => 'A_done', { entityType: 'school', entityId: 'SCH-1' });
+    const opB = tm.withOptimisticLock(async () => 'B_done', { entityType: 'school', entityId: 'SCH-1' });
+
+    const results = await Promise.allSettled([opA, opB]);
+
+    expect(results[0].status).toBe('fulfilled');
+    expect(results[0].value).toBe('A_done');
+
+    expect(results[1].status).toBe('rejected');
+    expect(results[1].reason).toBeInstanceOf(OptimisticLockError);
+    expect(results[1].reason.code).toBe('VERSION_MISMATCH');
+  });
+
+  test('handles initial version 0 upsert E11000 duplicate key race gracefully by throwing OptimisticLockError', async () => {
+    const tm = makeTM();
+    mockVersionCounter.findOne.mockResolvedValue(null); // version 0
+
+    const dupError = new Error('E11000 duplicate key error');
+    dupError.code = 11000;
+    mockVersionCounter.findOneAndUpdate.mockRejectedValue(dupError);
+
+    await expect(
+      tm.withOptimisticLock(async () => 'result', { entityType: 'school', entityId: 'SCH-NEW' })
+    ).rejects.toThrow(OptimisticLockError);
+  });
+});
+
+describe('withOptimisticLockRetry() (#1277)', () => {
+  beforeEach(() => {
+    mockVersionCounter.findOne.mockReset();
+    mockVersionCounter.findOneAndUpdate.mockReset();
+  });
+
+  test('observes OptimisticLockError, retries, and succeeds when version settles', async () => {
+    const tm = makeTM({ maxRetries: 3, retryDelayMs: 1 });
+
+    mockVersionCounter.findOne
+      .mockResolvedValueOnce({ version: 1 })
+      .mockResolvedValueOnce({ version: 2 });
+
+    // Attempt 1 fails CAS, Attempt 2 succeeds CAS
+    mockVersionCounter.findOneAndUpdate
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ entityType: 'school', entityId: 'SCH-1', version: 3 });
+
+    let attempts = 0;
+    const result = await tm.withOptimisticLockRetry(async (ver) => {
+      attempts++;
+      return `success_at_version_${ver}`;
+    }, { entityType: 'school', entityId: 'SCH-1' });
+
+    expect(result).toBe('success_at_version_2');
+    expect(attempts).toBe(2);
+    expect(mockVersionCounter.findOneAndUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  test('exhausts retries and throws OptimisticLockError when conflict persists', async () => {
+    const tm = makeTM({ maxRetries: 3, retryDelayMs: 1 });
+
+    mockVersionCounter.findOne.mockResolvedValue({ version: 1 });
+    mockVersionCounter.findOneAndUpdate.mockResolvedValue(null); // always fails CAS
+
+    let attempts = 0;
+    await expect(
+      tm.withOptimisticLockRetry(async () => {
+        attempts++;
+        return 'res';
+      }, { entityType: 'school', entityId: 'SCH-1' })
+    ).rejects.toThrow(OptimisticLockError);
+
+    expect(attempts).toBe(3);
   });
 });

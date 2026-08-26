@@ -115,7 +115,7 @@ async function resolveSchool(req, res, next) {
               code: 'TENANT_MISMATCH',
             });
           }
-        } catch (_) {
+        } catch {
           // Malformed/expired token — let the auth middleware handle it downstream.
         }
       }

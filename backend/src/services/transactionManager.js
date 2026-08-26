@@ -2,8 +2,8 @@
  * Transaction Manager Service
  *
  * Provides production-ready transaction management for MongoDB with support for:
- * - ACID transactions with proper isolation levels
- * - Optimistic and pessimistic locking strategies
+ * - ACID multi-document transactions (via withTransaction on replica sets)
+ * - Optimistic version-checking and pessimistic locking strategies
  * - Automatic retry with exponential backoff for transient errors
  * - Safe debit/credit operations for financial transactions
  * - Deadlock detection and recovery
@@ -485,31 +485,87 @@ class TransactionManager {
   }
 
   /**
-   * Execute with optimistic locking using version checking
+   * Execute an operation with optimistic concurrency version checking (#1277).
+   *
+   * ── CONCURRENCY & ISOLATION DESIGN NOTE ────────────────────────────────────
+   * `withOptimisticLock` reads the current version from `VersionCounter`, passes it
+   * to `operation(currentVersion)`, and performs a Compare-And-Swap (CAS) version
+   * increment upon completion:
+   *
+   *   VersionCounter.findOneAndUpdate({ entityType, entityId, version: currentVersion }, { $inc: { version: 1 } })
+   *
+   * If a concurrent writer has modified the `VersionCounter` document in the interim,
+   * the CAS filter fails and returns null (or throws E11000 duplicate key on initial upsert).
+   * This method detects the conflict and throws `OptimisticLockError`, allowing
+   * `withOptimisticLockRetry()` to catch it and retry the operation.
+   *
+   * Note on Lost-Update Prevention vs Conflict Detection:
+   * `withOptimisticLock` DETECTS version conflicts post-operation execution. Because
+   * `operation()` runs before the CAS version bump, any writes performed by `operation()`
+   * directly to MongoDB without a transaction or without checking the version field on
+   * the entity itself could still take effect before the conflict is detected.
+   *
+   * For single Mongoose document writes requiring atomic lost-update prevention within
+   * the update itself, use Mongoose's built-in `optimisticConcurrency: true` (`__v`).
+   * For multi-document transactions requiring full ACID isolation, use `withTransaction()`.
+   * `VersionCounter` is designed for decoupled application-level optimistic locking across
+   * non-Mongoose or multi-model workflow entities.
    */
   async withOptimisticLock(operation, options = {}) {
     const { entityType, entityId } = options;
+
+    if (!entityType || !entityId) {
+      throw new TransactionError(
+        'entityType and entityId options are required for withOptimisticLock',
+        TRANSACTION_ERRORS.INVALID_TRANSACTION,
+        { entityType, entityId }
+      );
+    }
 
     // Get current version
     const versionRecord = await VersionCounter.findOne({ entityType, entityId });
     const currentVersion = versionRecord?.version || 0;
 
-    // Execute operation with version check
+    // Execute operation with current version passed to caller
     const result = await operation(currentVersion);
 
-    // Update version after successful operation
-    await VersionCounter.findOneAndUpdate(
-      { entityType, entityId, version: currentVersion },
-      {
-        $inc: { version: 1 },
+    // Perform atomic Compare-And-Swap (CAS) update
+    let updated = null;
+    try {
+      updated = await VersionCounter.findOneAndUpdate(
+        { entityType, entityId, version: currentVersion },
+        {
+          $inc: { version: 1 },
+          $setOnInsert: { lockedUntil: null, lockHolder: null },
+        },
+        {
+          new: true,
+          upsert: currentVersion === 0,
+        }
+      );
+    } catch (err) {
+      // E11000 duplicate key error occurs if two operations attempt the initial upsert concurrently
+      if (err.code === 11000) {
+        updated = null;
+      } else {
+        throw err;
       }
-    );
+    }
+
+    if (!updated) {
+      throw new OptimisticLockError(
+        `Version conflict on ${entityType}:${entityId}. Expected version ${currentVersion}.`,
+        currentVersion,
+        currentVersion + 1,
+        { entityType, entityId }
+      );
+    }
 
     return result;
   }
 
   /**
-   * Optimistic lock wrapper with retry for version conflicts
+   * Optimistic lock wrapper with retry for version conflicts (#1277)
    */
   async withOptimisticLockRetry(operation, options = {}) {
     const maxRetries = options.maxRetries ?? 3;
@@ -521,6 +577,15 @@ class TransactionManager {
       } catch (error) {
         if (error.code === TRANSACTION_ERRORS.VERSION_MISMATCH) {
           attempt++;
+          if (attempt >= maxRetries) {
+            throw new OptimisticLockError(
+              `Optimistic lock failed after ${maxRetries} retries`,
+              null,
+              null,
+              { entityType: options.entityType, entityId: options.entityId, attempts: attempt }
+            );
+          }
+
           const delay = this.calculateBackoff(attempt);
           
           logger.warn('[TransactionManager] Optimistic lock conflict, retrying', {
