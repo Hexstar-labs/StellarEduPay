@@ -2,6 +2,7 @@
 
 const School = require('../models/schoolModel');
 const SystemConfig = require('../models/systemConfigModel');
+const schoolCache = require('./schoolCacheInvalidator');
 
 const SETTING_KEYS = new Set([
   'maxSyncBatchSize',
@@ -47,11 +48,13 @@ async function setSchoolSetting(schoolId, key, value) {
   if (!SETTING_KEYS.has(key)) {
     throw new Error(`Unknown setting key: ${key}`);
   }
-  return School.findOneAndUpdate(
+  const updated = await School.findOneAndUpdate(
     { schoolId },
     { $set: { [`settings.${key}`]: value } },
     { new: true },
   ).lean();
+  if (updated) schoolCache.invalidate(updated);
+  return updated;
 }
 
 async function getSchoolSettings(schoolId) {
@@ -74,11 +77,13 @@ async function clearSchoolSetting(schoolId, key) {
   if (!SETTING_KEYS.has(key)) {
     throw new Error(`Unknown setting key: ${key}`);
   }
-  return School.findOneAndUpdate(
+  const updated = await School.findOneAndUpdate(
     { schoolId },
     { $unset: { [`settings.${key}`]: '' } },
     { new: true },
   ).lean();
+  if (updated) schoolCache.invalidate(updated);
+  return updated;
 }
 
 module.exports = {

@@ -36,6 +36,7 @@
 const Decimal = require('decimal.js');
 const School = require('../models/schoolModel');
 const SystemConfig = require('../models/systemConfigModel');
+const schoolCache = require('./schoolCacheInvalidator');
 const { MIN_PAYMENT_AMOUNT, MAX_PAYMENT_AMOUNT } = require('../config');
 const logger = require('../utils/logger').child('PaymentLimits');
 
@@ -280,6 +281,7 @@ async function setSchoolLimits(schoolId, doc) {
     throw Object.assign(new Error(`School ${schoolId} not found`), { code: 'NOT_FOUND' });
   }
   invalidateCache(schoolId);
+  schoolCache.invalidate(updated);
   return doc;
 }
 
@@ -298,6 +300,7 @@ async function clearSchoolLimits(schoolId) {
     throw Object.assign(new Error(`School ${schoolId} not found`), { code: 'NOT_FOUND' });
   }
   invalidateCache(schoolId);
+  schoolCache.invalidate(updated);
 }
 
 /**

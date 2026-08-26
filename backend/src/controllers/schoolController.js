@@ -93,6 +93,8 @@ async function createSchool(req, res, next) {
       });
     }
 
+    schoolCache.invalidate(school);
+
     // Return 202 with warning if account is unfunded
     if (warning) {
       return res.status(202).json({ ...school.toObject(), warning });
