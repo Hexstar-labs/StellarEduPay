@@ -330,6 +330,17 @@ School
 
 ---
 
+## Concurrency Mechanism: Redis Distributed Locks (not MongoDB Transactions)
+
+StellarEduPay's concurrency primitive for financial operations is **Redis-backed distributed locking**, not MongoDB multi-document transactions.
+
+- **Lock service**: `backend/src/services/distributedLock.js` provides Redis-backed locks with `studentBalanceLockKey`.
+- **Call sites**: `stellarService.js`, `paymentController.js`, `underpaidReconciliationService.js` use distributed locks to serialize access to shared resources (e.g. a student's balance during concurrent payments).
+
+**Rationale:** Distributed locks are simpler to reason about than MongoDB transactions, are not affected by replica set configuration, and work across both MongoDB and external state (Stellar blockchain). They scale better under contention because lock holders are individually bounded and timeouts prevent indefinite hangs.
+
+**Not in use:** `backend/src/services/transactionManager.js` was added in commit 43f18e0 as a MongoDB-transaction implementation but was never adopted. It remains unreferenced in the codebase (`grep -r transactionManager backend/src --include='*.js' | grep -v transactionManager.js` yields no results). The module contains latent defects (invalid aggregation operators in non-pipeline updates, unscoped upserts creating tenant-less documents with NaN balances, stale reads between multi-step updates) that would corrupt financial state if adopted. It was deleted in this change.
+
 ## Replica Set Requirement
 
 MongoDB **multi-document transactions require a replica set (or a sharded cluster)**. This is an infrastructure requirement, not an application-code concern: against a standalone `mongod`, every attempt to start a transaction fails with
@@ -340,12 +351,11 @@ MongoServerError: Transaction numbers are only allowed on a replica set member o
 
 and no change to application code can fix it — the database must run with `--replSet` and be initiated once with `rs.initiate()`.
 
-StellarEduPay uses multi-document transactions on its core write paths, so this requirement applies to every environment that runs the backend:
+StellarEduPay configures MongoDB to support transactions on all environments, though transactions are not currently used on core write paths (which rely on distributed locks instead):
 
 - `transactionPollingService.processTransaction` — records the Payment and updates the Student balance atomically
 - `stellarService.verifyTransaction` — same pair of writes for manually verified payments
 - `feeController` and `feeAdjustmentController` batch apply — multi-document fee updates
-- `transactionManager.js` (`withTransaction`, `safeDebit`, `safeCredit`, `atomicTransfer`)
 
 ### How each environment complies
 
