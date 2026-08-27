@@ -461,6 +461,69 @@ Each school has its own `stellarAddress`. The transaction poller fans out to all
 
 ---
 
+## Money Representation on the Payment-Verification Path
+
+`paymentController.verifyPayment` and the `studentBalanceUpdater` it shares with
+`submitTransaction` decide whether a student's fee is settled — `valid`,
+`partial`, or `overpaid` — and compute `excessAmount` / `remainingBalance`.
+That decision used to run on IEEE-754 doubles: cumulative totals were summed
+with MongoDB's `{ $sum: '$amount' }` (float addition, done server-side, order
+not guaranteed), rounded with `toFixed(7)`, and re-parsed with `parseFloat`
+before being compared against `feeAmount` with exact `<` / `>` / `===`.
+`toFixed` cannot repair a value already corrupted by float addition, and
+`parseFloat` immediately turns the rounded string back into a double —
+reintroducing the same class of error on the next operation. A fee paid in
+installments that summed, in exact decimal, to precisely the fee amount could
+therefore land one unit-in-the-last-place away and be misclassified `partial`
+or `overpaid` instead of `valid`.
+
+**Chosen representation: `decimal.js`.** This was already the convention
+elsewhere in the codebase (`paymentLimitsService.js`,
+`currencyConversionService.js`, `feeAdjustmentEngine.js`,
+`utils/paymentLimits.js` — see their "ROUNDING POLICY" comments), so extending
+it to the verification path unifies on an existing pattern rather than adding
+a fourth. Integer Stellar stroops (`utils/stellarAmount.js`, used by
+`stellarService.js`) remain the right choice for on-chain amount parsing and
+comparison, and are unaffected by this change.
+
+`backend/src/utils/money.js` is the canonical entry point for this path:
+
+- `toMoney(value)` / `decimalFromMongo(value)` — parse a JS value or a BSON
+  `Decimal128` aggregation result into a `Decimal`.
+- `classifyFeePayment(cumulativeTotal, feeAmount)` — the single place that
+  decides `valid` / `partial` / `overpaid` and derives `excessAmount` /
+  `remainingBalance`, all via exact `Decimal` comparison (`.cmp()`), never
+  float `<`/`>`/`===`.
+- `roundMoney(value)` / `toMoneyNumber(value)` — round to Stellar's 7 decimal
+  places and convert to a plain `Number` **only at the output boundary**
+  (the HTTP response or the Mongo write).
+
+**Conversion boundaries:**
+
+```
+MongoDB (amount: Number)
+      │  $group: { $sum: { $toDecimal: '$amount' } }   ← summed as Decimal128, exact
+      ▼
+Decimal128 (aggregation result)
+      │  decimalFromMongo()
+      ▼
+Decimal (decimal.js) ── classifyFeePayment() ── all arithmetic and comparison here
+      │  toMoneyNumber() / roundMoney().toNumber()
+      ▼
+Number  → HTTP response body / Student.totalPaid, remainingBalance, feePaid
+```
+
+The MongoDB half of the fix matters as much as the JS half: summing
+`{ $sum: '$amount' }` accumulates BSON-double rounding **inside MongoDB**,
+before the result ever reaches Node, so no amount of `decimal.js` downstream
+can recover it. Wrapping the summed field in `$toDecimal` makes MongoDB
+perform the addition in exact Decimal128 space instead.
+
+`parseFloat(x.toFixed(7))` must not reappear anywhere on this path — it is a
+reliable marker of float money arithmetic creeping back in.
+
+---
+
 ## Content Security Policy (CSP) Strategy
 
 CSP is enforced at two distinct layers, each appropriate to what it serves.
